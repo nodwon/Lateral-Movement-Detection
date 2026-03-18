@@ -273,6 +273,9 @@ def upload_page():
                                     unsafe_allow_html=True
                                 )
                                 return
+                            
+                            file_bytes = uploaded.read()
+                            uploaded.seek(0)   
 
                             st.session_state["file_type"] = "csv"
                             st.session_state["file_bytes"] = file_bytes
