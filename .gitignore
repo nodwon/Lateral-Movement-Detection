@@ -1,0 +1,17 @@
+# API 키 — 절대 올리면 안됨
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+
+# 데이터 파일
+*.pcap
+*.pcapng
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,3 +1,19 @@
+.env 파일 생성후
+
+    OPENAI_API_KEY = [KEY]
+
+입력 후 저장
+
+    python -m venv venv
+
+    venv\Scripts\activate
+
+    pip install -r front/requirements.txt
+
+    streamlit run front/app.py       
+
+순서로 실행
+
 🛡️ 수평 이동(Lateral Movement) 탐지 및 위험도 산정 시스템
 
 SK Shieldus Rookies 프로젝트의 일환으로, UNSW-NB15 데이터셋을 활용하여 내부망 보안의 핵심인 '수평 이동' 공격을 실시간으로 탐지하고 대응하는 지능형 관제 시스템을 개발합니다.
