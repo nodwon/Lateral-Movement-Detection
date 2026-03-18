@@ -18,62 +18,131 @@ LATERAL_PORTS = {
 
 PROTO_MAP = {6: "TCP", 17: "UDP", 1: "ICMP", 2: "IGMP"}
 
+# 내부 IP 대역
+INTERNAL_SUBNETS = ("192.168.", "10.", "172.16.", "172.17.", "172.18.",
+                    "172.19.", "172.20.", "172.21.", "172.22.", "172.23.",
+                    "172.24.", "172.25.", "172.26.", "172.27.", "172.28.",
+                    "172.29.", "172.30.", "172.31.")
+
+def _is_internal(ip: str) -> int:
+    return 1 if str(ip).startswith(INTERNAL_SUBNETS) else 0
+
+def _tcp_state(flags: int) -> str:
+    """TCP flags → UNSW-NB15 style state 문자열"""
+    if flags & 0x04: return "RST"   # RST
+    if flags & 0x01: return "FIN"   # FIN
+    if flags & 0x12: return "SA"    # SYN+ACK
+    if flags & 0x02: return "S"     # SYN
+    if flags & 0x10: return "A"     # ACK
+    return "OTH"
+
 def load_pcap(pcap_file) -> pd.DataFrame:
     """
-    PCAP
+    PCAP → DataFrame (XGBoost 피처 최대 추출)
+    패킷 단위로 파싱하고, 플로우 단위 집계로 UNSW-NB15 피처 근사
     """
-
     try:
         packets = rdpcap(pcap_file)
     except Exception as e:
         raise ValueError(f"PCAP 파일을 읽을 수 없습니다: {e}")
 
+    # ── 1단계: 패킷 파싱 ──────────────────────────────────────────
     rows = []
-
     for pkt in packets:
-
-        # IP 패킷만 처리
         if IP not in pkt:
             continue
 
-        src = pkt[IP].src
-        dst = pkt[IP].dst
+        src      = pkt[IP].src
+        dst      = pkt[IP].dst
         proto_num = pkt[IP].proto
+        ttl      = pkt[IP].ttl
+        pkt_len  = len(pkt)
+        ts       = float(pkt.time)
 
-        proto = PROTO_MAP.get(proto_num, "OTHER")
-        src_port = None
-        dst_port = None
+        proto_str = "other"
+        src_port  = 0
+        dst_port  = 0
+        tcp_flags = 0
+        state     = "OTH"
 
         if TCP in pkt:
-            src_port = pkt[TCP].sport
-            dst_port = pkt[TCP].dport
-            proto = "TCP"
+            src_port  = pkt[TCP].sport
+            dst_port  = pkt[TCP].dport
+            tcp_flags = int(pkt[TCP].flags)
+            proto_str = "tcp"
+            state     = _tcp_state(tcp_flags)
         elif UDP in pkt:
-            src_port = pkt[UDP].sport
-            dst_port = pkt[UDP].dport
-            proto = "UDP"
+            src_port  = pkt[UDP].sport
+            dst_port  = pkt[UDP].dport
+            proto_str = "udp"
+            state     = "CON"
 
         rows.append({
-            "SourceAddress": src,
-            "DestAddress": dst,
-            "SrcPort": src_port,
-            "DestPort": dst_port,
-            "Protocol": proto_num,
-            "Application": proto,
-            "Bytes": len(pkt)
+            "src": src, "dst": dst,
+            "sport": src_port, "dsport": dst_port,
+            "proto": proto_str, "state": state,
+            "ttl": ttl, "pkt_len": pkt_len, "ts": ts,
         })
 
     if not rows:
         raise ValueError("유효한 IP 패킷이 없습니다.")
 
-    df = pd.DataFrame(rows)
+    raw = pd.DataFrame(rows)
 
-    # ── 공통 후처리 (load_csv와 동일) ────────────────────────────────
-    df["DestPort"] = pd.to_numeric(df["DestPort"], errors="coerce")
-    df["SrcPort"]  = pd.to_numeric(df["SrcPort"], errors="coerce")
-    df["Bytes"]    = pd.to_numeric(df["Bytes"], errors="coerce").fillna(0)
+    # ── 2단계: 플로우 단위 집계 (src+dst+sport+dsport+proto) ──────
+    flow_key = ["src", "dst", "sport", "dsport", "proto"]
 
-    # 측면 이동 포트 → Application 덮어쓰기
+    grp = raw.groupby(flow_key, dropna=False)
+
+    agg = grp.agg(
+        sbytes   =("pkt_len", "sum"),
+        spkts    =("pkt_len", "count"),
+        sttl     =("ttl",     "mean"),
+        dur      =("ts",      lambda x: x.max() - x.min()),
+        state    =("state",   lambda x: x.mode()[0] if len(x) > 0 else "OTH"),
+        sintpkt  =("ts",      lambda x: x.diff().mean() if len(x) > 1 else 0),
+    ).reset_index()
+
+    # 역방향 플로우(dbytes, dpkts) 계산
+    rev_key = raw.rename(columns={"src":"dst","dst":"src",
+                                   "sport":"dsport","dsport":"sport"})
+    rev_grp = rev_key.groupby(flow_key, dropna=False)
+    rev_agg = rev_grp.agg(
+        dbytes=("pkt_len", "sum"),
+        dpkts =("pkt_len", "count"),
+        dttl  =("ttl",     "mean"),
+        dintpkt=("ts",     lambda x: x.diff().mean() if len(x) > 1 else 0),
+    ).reset_index()
+
+    df = agg.merge(rev_agg, on=flow_key, how="left").fillna(0)
+
+    # ── 3단계: 추가 피처 계산 ────────────────────────────────────
+    df["smeansz"]  = (df["sbytes"] / df["spkts"].replace(0, 1)).round(2)
+    df["dmeansz"]  = (df["dbytes"] / df["dpkts"].replace(0, 1)).round(2)
+    df["sload"]    = (df["sbytes"] * 8 / df["dur"].replace(0, 1)).round(2)
+    df["dload"]    = (df["dbytes"] * 8 / df["dur"].replace(0, 1)).round(2)
+    df["sjit"]     = df["sintpkt"].round(4)
+    df["djit"]     = df["dintpkt"].round(4)
+
+    # is_internal, is_critical_port (XGBoost 핵심 피처)
+    df["is_internal"]     = df["src"].apply(_is_internal)
+    df["is_critical_port"] = df["dsport"].apply(
+        lambda p: 1 if int(p) in LATERAL_PORTS else 0
+    )
+
+    # ── 4단계: 내부 컬럼명으로 정리 ─────────────────────────────
+    df = df.rename(columns={
+        "src":  "SourceAddress",
+        "dst":  "DestAddress",
+        "proto": "ProtoRaw",
+    })
+
+    df["SrcPort"]     = df["sport"]
+    df["DestPort"]    = df["dsport"]
+    df["Bytes"]       = df["sbytes"]
+    df["Application"] = df["ProtoRaw"].str.upper()
+
+    # 측면이동 포트 → Application 덮어쓰기
     df["Application"] = df.apply(
         lambda r: LATERAL_PORTS.get(int(r["DestPort"]), r["Application"])
         if pd.notna(r["DestPort"]) else r["Application"],
