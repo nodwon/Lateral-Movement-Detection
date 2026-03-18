@@ -98,31 +98,57 @@ def aggregate_edges(df: pd.DataFrame) -> pd.DataFrame:
     normal  = grp[~grp["DestPort"].isin(LATERAL_PORTS)].nlargest(30, "Bytes")
     result  = pd.concat([lateral, normal]).drop_duplicates()
     result["DestPort"] = result["DestPort"].fillna(0).astype(int)
+
+    # 그래프 렌더링 성능 — 엣지 200개, 노드 150개 초과 시 상위만 유지
+    if len(result) > 200:
+        lat_part    = result[result["DestPort"].isin(LATERAL_PORTS)]
+        normal_part = result[~result["DestPort"].isin(LATERAL_PORTS)].nlargest(
+            max(0, 200 - len(lat_part)), "Bytes"
+        )
+        result = pd.concat([lat_part, normal_part]).drop_duplicates()
+
+    all_ips = set(result["SourceAddress"]) | set(result["DestAddress"])
+    if len(all_ips) > 150:
+        # 측면이동 연관 IP 우선 보존
+        lateral_ips = set(result[result["DestPort"].isin(LATERAL_PORTS)]["SourceAddress"]) |                       set(result[result["DestPort"].isin(LATERAL_PORTS)]["DestAddress"])
+        keep_ips = lateral_ips
+        for _, row in result.nlargest(150, "Bytes").iterrows():
+            keep_ips.add(row["SourceAddress"])
+            keep_ips.add(row["DestAddress"])
+            if len(keep_ips) >= 150:
+                break
+        result = result[
+            result["SourceAddress"].isin(keep_ips) &
+            result["DestAddress"].isin(keep_ips)
+        ]
+
     return result
 
 
 def compute_risk(df: pd.DataFrame) -> dict:
-    """IP별 위험도 점수 (0.0 ~ 1.0)"""
-    risk = {}
-    all_ips = set(df["SourceAddress"]) | set(df["DestAddress"])
+    """IP별 위험도 점수 (0.0 ~ 1.0) — groupby 벡터 연산으로 최적화"""
 
+    # ① 측면이동 포트 사용 횟수 (소스 IP 기준)
+    lat_counts = (
+        df[df["DestPort"].isin(LATERAL_PORTS)]
+        .groupby("SourceAddress").size()
+    )
+
+    # ② 다수 목적지 접근 수 (소스 IP 기준)
+    dst_counts = df.groupby("SourceAddress")["DestAddress"].nunique()
+
+    # ③ 트래픽 볼륨 합계 (소스 IP 기준)
+    byte_sums = df.groupby("SourceAddress")["Bytes"].sum()
+
+    all_ips = set(df["SourceAddress"]) | set(df["DestAddress"])
+    risk = {}
     for ip in all_ips:
         score = 0.0
-        as_src = df[df["SourceAddress"] == ip]
-
-        # ① 측면이동 포트 사용
-        lat = as_src[as_src["DestPort"].isin(LATERAL_PORTS)].shape[0]
-        score += min(lat * 0.05, 0.45)
-
-        # ② 다수 목적지 접근 (스캐닝)
-        n_dst = as_src["DestAddress"].nunique()
-        score += min(n_dst * 0.05, 0.3)
-
-        # ③ 트래픽 볼륨
-        total_bytes = as_src["Bytes"].sum()
-        if total_bytes > 500000:  score += 0.15
-        elif total_bytes > 50000: score += 0.07
-
+        score += min(lat_counts.get(ip, 0) * 0.05, 0.45)
+        score += min(dst_counts.get(ip, 0) * 0.05, 0.3)
+        b = byte_sums.get(ip, 0)
+        if b > 500000:  score += 0.15
+        elif b > 50000: score += 0.07
         risk[ip] = round(min(score, 1.0), 2)
     return risk
 

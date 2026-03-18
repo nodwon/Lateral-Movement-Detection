@@ -23,15 +23,21 @@ def build_networkx_graph(edge_df: pd.DataFrame) -> nx.DiGraph:
 def compute_nx_metrics(G: nx.DiGraph) -> dict:
     """
     NetworkX 알고리즘으로 노드별 지표 계산
-    - betweenness_centrality : 공격 허브 탐지 (경유 빈도)
+    - betweenness_centrality : 공격 허브 탐지 (노드 500개 초과 시 샘플링)
     - in_degree_centrality   : 많이 공격받는 노드
     - out_degree_centrality  : 많이 공격하는 노드
     """
     metrics = {}
 
-    betweenness = nx.betweenness_centrality(G, normalized=True)
-    in_deg      = nx.in_degree_centrality(G)
-    out_deg     = nx.out_degree_centrality(G)
+    # 노드 수 많으면 샘플링으로 근사 계산 (속도 최적화)
+    n = G.number_of_nodes()
+    if n > 500:
+        k = min(100, n)  # 최대 100개 샘플로 근사
+        betweenness = nx.betweenness_centrality(G, normalized=True, k=k)
+    else:
+        betweenness = nx.betweenness_centrality(G, normalized=True)
+    in_deg  = nx.in_degree_centrality(G)
+    out_deg = nx.out_degree_centrality(G)
 
     # 측면이동 엣지만 추출한 서브그래프
     lateral_edges = [(u, v) for u, v, d in G.edges(data=True) if d.get("is_lateral")]
@@ -88,9 +94,21 @@ def find_attack_paths(G: nx.DiGraph) -> list:
         except Exception:
             continue
 
-    # 중복 제거, 긴 경로 우선
+    # 중복 제거, 긴 경로 우선 정렬
     paths = sorted(set(tuple(p) for p in paths), key=len, reverse=True)
-    return [list(p) for p in paths[:3]]  # 상위 3개만
+
+    # 부분 경로 제거 — 더 긴 경로의 부분집합인 경로는 제외
+    filtered = []
+    for path in paths:
+        path_set = set(path)
+        is_subset = any(
+            path_set.issubset(set(longer)) and list(path) != longer
+            for longer in filtered
+        )
+        if not is_subset:
+            filtered.append(list(path))
+
+    return filtered  # 전체 반환 (UI에서 표시)
 
 
 def build_graph_html(edge_df: pd.DataFrame, risk_scores: dict) -> str:
@@ -198,20 +216,33 @@ def build_graph_html(edge_df: pd.DataFrame, risk_scores: dict) -> str:
     nodes_json = json.dumps(nodes, ensure_ascii=False)
     edges_json = json.dumps(edges, ensure_ascii=False)
 
-    # 공격 경로 텍스트
-    path_text = ""
-    for i, path in enumerate(paths, 1):
-        path_text += f"경로 {i}: {' → '.join(path)}<br>"
-    if not path_text:
-        path_text = "탐지된 측면이동 경로 없음"
+    # 공격 경로 텍스트 — 스크롤 가능한 행 형태
+    if paths:
+        path_rows = ""
+        for i, path in enumerate(paths, 1):
+            hops = len(path) - 1
+            path_str = " → ".join(path)
+            path_rows += (
+                f"<div class='path-row'>"+
+                f"<span class='path-num'>{i}</span>"+
+                f"<span class='path-hops'>{hops}홉</span>"+
+                f"<span class='path-str'>{path_str}</span>"+
+                f"</div>"
+            )
+        path_text = path_rows
+        path_count = len(paths)
+    else:
+        path_text = "<div style='color:#555;padding:6px 0'>탐지된 측면이동 경로 없음</div>"
+        path_count = 0
 
     return f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.js"></script>
 <link href="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.css" rel="stylesheet">
 <style>
 *{{margin:0;padding:0;box-sizing:border-box;}}
-body{{background:#0d0d1a;font-family:monospace;}}
-#graph{{width:100%;height:440px;background:#0d0d1a;border:1px solid #2a2a4a;border-radius:8px;}}
+html,body{{height:620px;overflow:hidden;background:#0d0d1a;font-family:monospace;}}
+body{{display:flex;flex-direction:column;}}
+#graph{{width:100%;flex:1;min-height:0;background:#0d0d1a;border:1px solid #2a2a4a;border-radius:8px 8px 0 0;}}
 .vis-tooltip{{background:#1a1a2e !important;color:#fff !important;border:1px solid #444 !important;
   border-radius:6px !important;padding:8px 12px !important;font-size:12px !important;
   font-family:monospace !important;max-width:300px;line-height:1.6;}}
@@ -225,11 +256,34 @@ body{{background:#0d0d1a;font-family:monospace;}}
   border:1px solid #333;border-radius:8px;padding:10px 14px;color:#ccc;font-size:11px;z-index:10;}}
 .legend-item{{display:flex;align-items:center;gap:8px;margin:3px 0;}}
 .dot{{width:9px;height:9px;border-radius:50%;flex-shrink:0;}}
-#path-bar{{background:rgba(20,20,40,0.9);border:1px solid #2a2a4a;border-radius:0 0 8px 8px;
-  padding:8px 14px;font-size:11px;color:#aaa;line-height:1.8;}}
-#path-bar b{{color:#FFD700;}}
+#path-bar{{background:rgba(20,20,40,0.9);border:1px solid #2a2a4a;
+  border-radius:0 0 8px 8px;font-size:11px;color:#aaa;flex-shrink:0;}}
+#path-bar-header{{
+  padding:8px 14px 6px;color:#FFD700;font-weight:bold;font-size:11px;
+  border-bottom:1px solid #2a2a4a;display:flex;align-items:center;gap:8px;}}
+#path-bar-count{{
+  background:rgba(255,215,0,0.15);border:1px solid rgba(255,215,0,0.3);
+  border-radius:10px;padding:1px 8px;font-size:10px;color:#FFD700;}}
+#path-bar-scroll{{
+  height:160px;overflow-y:auto;padding:4px 0;}}
+#path-bar-scroll::-webkit-scrollbar{{width:4px;}}
+#path-bar-scroll::-webkit-scrollbar-track{{background:#0d0d1a;}}
+#path-bar-scroll::-webkit-scrollbar-thumb{{background:#2a2a4a;border-radius:2px;}}
+.path-row{{
+  display:flex;align-items:baseline;gap:8px;
+  padding:3px 14px;line-height:1.6;
+  border-bottom:1px solid rgba(255,255,255,0.03);}}
+.path-row:hover{{background:rgba(255,215,0,0.04);}}
+.path-num{{
+  color:#FFD700;font-weight:bold;font-size:11px;
+  flex-shrink:0;width:16px;}}
+.path-hops{{
+  color:#556;font-size:10px;flex-shrink:0;
+  background:rgba(100,100,180,0.15);border-radius:3px;
+  padding:0 5px;}}
+.path-str{{color:#8899aa;font-size:11px;word-break:break-all;}}
 </style></head><body>
-<div style="position:relative">
+<div style="position:relative;flex:1;min-height:0;display:flex;flex-direction:column;">
   <div id="graph"></div>
   <div id="info-panel">
     <h4 id="ip-title">-</h4>
@@ -250,7 +304,13 @@ body{{background:#0d0d1a;font-family:monospace;}}
     <div class="legend-item"><span style="font-size:11px">◆</span> 외부 IP</div>
   </div>
 </div>
-<div id="path-bar"><b>🔍 탐지된 공격 경로 (NetworkX)</b><br>{path_text}</div>
+<div id="path-bar">
+  <div id="path-bar-header">
+    🔍 탐지된 공격 경로 (NetworkX)
+    <span id="path-bar-count">{path_count}개</span>
+  </div>
+  <div id="path-bar-scroll">{path_text}</div>
+</div>
 <script>
 var nodes=new vis.DataSet({nodes_json});
 var edges=new vis.DataSet({edges_json});
@@ -264,29 +324,151 @@ var network=new vis.Network(document.getElementById('graph'),{{nodes,edges}},{{
   edges:{{smooth:{{type:'curvedCW',roundness:0.15}}}},
   nodes:{{borderWidth:2}}
 }});
+// 원본 색상 저장
+var originalNodeColors={{}};
+var originalEdgeColors={{}};
+nodes.get().forEach(function(n){{
+  originalNodeColors[n.id]={{
+    background: n.color.background,
+    border: n.color.border,
+    fontColor: n.font?n.font.color:'#ffffff'
+  }};
+}});
+edges.get().forEach(function(e){{
+  originalEdgeColors[e.id]={{
+    color: e.color.color,
+    width: e.width,
+    fontColor: e.font?e.font.color:'#aaaaaa'
+  }};
+}});
+
+var selectedNode=null;
+
+function dimAll(){{
+  var nodeUpdates=[];
+  var edgeUpdates=[];
+  nodes.get().forEach(function(n){{
+    nodeUpdates.push({{
+      id:n.id,
+      color:{{background:'#1a1a28',border:'#2a2a3a'}},
+      font:{{color:'#333344'}}
+    }});
+  }});
+  edges.get().forEach(function(e){{
+    edgeUpdates.push({{
+      id:e.id,
+      color:{{color:'#1a1a28'}},
+      font:{{color:'#1a1a28'}},
+      width:0.5
+    }});
+  }});
+  nodes.update(nodeUpdates);
+  edges.update(edgeUpdates);
+}}
+
+function highlightNode(nodeId){{
+  var connEdges=edges.get({{filter:function(e){{return e.from===nodeId||e.to===nodeId;}}}});
+  var connNodeIds=new Set([nodeId]);
+  connEdges.forEach(function(e){{
+    connNodeIds.add(e.from);
+    connNodeIds.add(e.to);
+  }});
+  // 연결 노드 원래 색으로
+  connNodeIds.forEach(function(id){{
+    var orig=originalNodeColors[id];
+    if(!orig) return;
+    var isSel=(id===nodeId);
+    nodes.update([{{
+      id:id,
+      color:{{
+        background: orig.background,
+        border: isSel?'#ffffff':orig.border
+      }},
+      font:{{color:orig.fontColor}},
+      borderWidth: isSel?3:1.5
+    }}]);
+  }});
+  // 연결 엣지 원래 색으로
+  connEdges.forEach(function(e){{
+    var orig=originalEdgeColors[e.id];
+    if(!orig) return;
+    edges.update([{{
+      id:e.id,
+      color:{{color:orig.color}},
+      font:{{color:orig.fontColor}},
+      width:orig.width
+    }}]);
+  }});
+}}
+
+function resetAll(){{
+  var nodeUpdates=[];
+  var edgeUpdates=[];
+  nodes.get().forEach(function(n){{
+    var orig=originalNodeColors[n.id];
+    if(!orig) return;
+    nodeUpdates.push({{id:n.id,color:{{background:orig.background,border:orig.border}},font:{{color:orig.fontColor}},borderWidth:1.5}});
+  }});
+  edges.get().forEach(function(e){{
+    var orig=originalEdgeColors[e.id];
+    if(!orig) return;
+    edgeUpdates.push({{id:e.id,color:{{color:orig.color}},font:{{color:orig.fontColor}},width:orig.width}});
+  }});
+  nodes.update(nodeUpdates);
+  edges.update(edgeUpdates);
+  selectedNode=null;
+  document.getElementById('info-panel').style.display='none';
+}}
+
 network.on('click',function(p){{
   var panel=document.getElementById('info-panel');
   if(p.nodes.length>0){{
     var nodeId=p.nodes[0];
+    // 같은 노드 다시 클릭하면 원상복구
+    if(selectedNode===nodeId){{
+      resetAll();
+      return;
+    }}
+    selectedNode=nodeId;
     var n=nodes.get(nodeId);
+    // 전체 흐리게 → 연결된 것만 강조
+    dimAll();
+    highlightNode(nodeId);
+    // 패널 업데이트
     document.getElementById('ip-title').textContent=nodeId;
     var b=document.getElementById('risk-badge');
     b.textContent=n.risk>=0.7?'HIGH':(n.risk>=0.4?'MEDIUM':'LOW');
-    b.style.background=n.color.background;b.style.color='#fff';
-    var ce=edges.get({{filter:e=>e.from===nodeId||e.to===nodeId}});
-    var outbound=ce.filter(e=>e.from===nodeId);
-    var inbound=ce.filter(e=>e.to===nodeId);
-    var latOut=outbound.filter(e=>e.width>=2.5).length;
+    b.style.background=originalNodeColors[nodeId].background;
+    b.style.color='#fff';
+    var ce=edges.get({{filter:function(e){{return e.from===nodeId||e.to===nodeId;}}}});
+    var outbound=ce.filter(function(e){{return e.from===nodeId;}});
+    var inbound=ce.filter(function(e){{return e.to===nodeId;}});
+    var latOut=outbound.filter(function(e){{return originalEdgeColors[e.id]&&originalEdgeColors[e.id].width>=2.5;}}).length;
     document.getElementById('ip-details').innerHTML=
       '<br>Risk Score: <b>'+n.risk+'</b>'+
       '<br>경유 중심성: <b>'+n.betweenness+'</b>'+
       '<br>측면이동 PR: <b>'+n.lat_pagerank+'</b>'+
       '<br>발신: '+outbound.length+'건 | 수신: '+inbound.length+'건'+
-      (latOut>0?'<br><span style="color:#FF4B4B">⚠️ 측면이동 발신: '+latOut+'건</span>':'');
+      (latOut>0?'<br><span style="color:#FF4B4B">⚠️ 측면이동 발신: '+latOut+'건</span>':'')+
+      '<br><br><span style="color:#555;font-size:10px">다시 클릭하거나 빈 곳 클릭 시 초기화</span>';
     panel.style.display='block';
-  }}else{{panel.style.display='none';}}
+  }}else{{
+    // 빈 곳 클릭 → 원상복구
+    resetAll();
+  }}
 }});
+
 network.on('stabilizationIterationsDone',function(){{
   network.setOptions({{physics:{{enabled:false}}}});
+  // 안정화 후 원본 색상 재저장 (physics 이후 색상 확정)
+  nodes.get().forEach(function(n){{
+    if(n.color&&n.color.background){{
+      originalNodeColors[n.id]={{
+        background:n.color.background,
+        border:n.color.border||'#1a1a2e',
+        fontColor:n.font?n.font.color:'#ffffff'
+      }};
+    }}
+  }});
 }});
 </script></body></html>"""
