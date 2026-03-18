@@ -2,6 +2,7 @@ import json
 import pandas as pd
 import networkx as nx
 from analysis import LATERAL_PORTS, risk_color, risk_label
+from scapy.all import rdpcap, IP, TCP, UDP
 
 
 def build_networkx_graph(edge_df: pd.DataFrame) -> nx.DiGraph:
@@ -109,6 +110,67 @@ def find_attack_paths(G: nx.DiGraph) -> list:
             filtered.append(list(path))
 
     return filtered  # 전체 반환 (UI에서 표시)
+
+def pcap_to_edge_df(pcap_file):
+    """
+    PCAP
+    """
+
+    try:
+        packets = rdpcap(pcap_file)
+    except Exception as e:
+        raise ValueError(f"PCAP 파일을 읽을 수 없습니다: {e}")
+
+    rows = []
+    count = 0
+
+    for pkt in packets:
+        # IP 패킷만 처리
+        if IP not in pkt:
+            continue
+
+        src = pkt[IP].src
+        dst = pkt[IP].dst
+
+        proto = "OTHER"
+        port = 0
+
+        if TCP in pkt:
+            proto = "TCP"
+            port = pkt[TCP].dport
+        elif UDP in pkt:
+            proto = "UDP"
+            port = pkt[UDP].dport
+
+        rows.append({
+            "SourceAddress": src,
+            "DestAddress": dst,
+            "DestPort": port,
+            "Application": proto,
+            "Bytes": len(pkt)
+        })
+
+        count += 1
+
+    if not rows:
+        raise ValueError("유효한 IP 패킷이 없습니다.")
+
+    df = pd.DataFrame(rows)
+
+    # ── 엣지 집계 ─────────────────────────────
+    edge_df = (
+        df.groupby(
+            ["SourceAddress", "DestAddress", "DestPort", "Application"]
+        )
+        .agg(
+            Packets=("Bytes", "count"),
+            Bytes=("Bytes", "sum")
+        )
+        .reset_index()
+    )
+
+    return edge_df
+
 
 
 def build_graph_html(edge_df: pd.DataFrame, risk_scores: dict) -> str:
