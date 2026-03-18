@@ -16,7 +16,7 @@ def chat_with_data(messages: list, data_summary: str, api_key: str) -> str:
 답변은 간결하게 핵심만 전달해주세요."""
 
         resp = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o-mini",
             messages=[{"role": "system", "content": system_prompt}] + messages,
             max_tokens=500,
         )

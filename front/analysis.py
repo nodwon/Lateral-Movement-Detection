@@ -20,36 +20,61 @@ PROTO_MAP = {6: "TCP", 17: "UDP", 1: "ICMP", 2: "IGMP"}
 
 def load_csv(file) -> pd.DataFrame:
     """
-    업로드된 CSV를 읽고 컬럼을 정규화해서 반환
-    실제 컬럼: frame.time_relative, ip.src, ip.dst, ip.proto,
-               frame.len, tcp.flags, tcp.srcport, tcp.dstport
+    두 가지 CSV 포맷 모두 지원
+    포맷 A (PCAP 추출): frame.time_relative, ip.src, ip.dst, ip.proto, frame.len, tcp.dstport
+    포맷 B (UNSW-NB15): srcip, dstip, dsport, sport, proto, sbytes, stime, attack_cat, label
     """
     df = pd.read_csv(file, on_bad_lines="skip")
-    df = df.dropna(subset=["ip.src", "ip.dst"])
 
-    # 컬럼 이름 통일 (내부에서 쓰기 편하게)
-    df = df.rename(columns={
-        "frame.time_relative": "EventTime",
-        "ip.src":              "SourceAddress",
-        "ip.dst":              "DestAddress",
-        "ip.proto":            "Protocol",
-        "frame.len":           "Bytes",
-        "tcp.srcport":         "SrcPort",
-        "tcp.dstport":         "DestPort",
-        "tcp.flags":           "Flags",
-    })
+    # ── 포맷 감지 ──────────────────────────────────────────────────
+    cols = set(df.columns)
+    is_format_b = "srcip" in cols and "dstip" in cols
 
+    if is_format_b:
+        # 포맷 B — UNSW-NB15 계열
+        df = df.dropna(subset=["srcip", "dstip"])
+        df = df.rename(columns={
+            "srcip":  "SourceAddress",
+            "dstip":  "DestAddress",
+            "dsport": "DestPort",
+            "sport":  "SrcPort",
+            "sbytes": "Bytes",
+            "stime":  "EventTime",
+            "proto":  "ProtoRaw",
+        })
+        # 문자열 프로토콜 → Application
+        proto_str_map = {"tcp": "TCP", "udp": "UDP", "icmp": "ICMP", "arp": "ARP"}
+        df["Application"] = df["ProtoRaw"].str.lower().map(proto_str_map).fillna("OTHER")
+
+        # attack_cat 있으면 Application 덮어쓰기
+        if "attack_cat" in df.columns:
+            mask = df["attack_cat"].notna() & (df["attack_cat"].astype(str).str.strip() != "0") & (df["attack_cat"].astype(str).str.strip() != "")
+            df.loc[mask, "Application"] = df.loc[mask, "attack_cat"]
+
+    else:
+        # 포맷 A — PCAP 추출 CSV
+        df = df.dropna(subset=["ip.src", "ip.dst"])
+        df = df.rename(columns={
+            "frame.time_relative": "EventTime",
+            "ip.src":              "SourceAddress",
+            "ip.dst":              "DestAddress",
+            "ip.proto":            "Protocol",
+            "frame.len":           "Bytes",
+            "tcp.srcport":         "SrcPort",
+            "tcp.dstport":         "DestPort",
+            "tcp.flags":           "Flags",
+        })
+        df["Protocol"] = pd.to_numeric(df["Protocol"], errors="coerce")
+        df["Application"] = df["Protocol"].apply(
+            lambda p: PROTO_MAP.get(int(p), "OTHER") if pd.notna(p) else "OTHER"
+        )
+
+    # ── 공통 후처리 ────────────────────────────────────────────────
     df["DestPort"] = pd.to_numeric(df["DestPort"], errors="coerce")
-    df["SrcPort"]  = pd.to_numeric(df["SrcPort"],  errors="coerce")
-    df["Bytes"]    = pd.to_numeric(df["Bytes"],     errors="coerce").fillna(0)
-    df["Protocol"] = pd.to_numeric(df["Protocol"],  errors="coerce")
+    df["SrcPort"]  = pd.to_numeric(df.get("SrcPort", pd.Series(dtype=float)), errors="coerce")
+    df["Bytes"]    = pd.to_numeric(df["Bytes"], errors="coerce").fillna(0)
 
-    # 프로토콜 이름
-    df["Application"] = df.apply(
-        lambda r: PROTO_MAP.get(int(r["Protocol"]), "OTHER") if pd.notna(r["Protocol"])
-                  else "OTHER", axis=1
-    )
-    # 측면이동 포트면 프로토콜 이름 덮어쓰기
+    # 측면이동 포트면 Application 덮어쓰기
     df["Application"] = df.apply(
         lambda r: LATERAL_PORTS.get(int(r["DestPort"]), r["Application"])
                   if pd.notna(r["DestPort"]) else r["Application"], axis=1

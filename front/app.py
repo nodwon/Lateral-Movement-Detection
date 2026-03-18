@@ -175,8 +175,10 @@ if "chat_history" not in st.session_state:
     st.session_state["chat_history"] = []
 
 # ── 필수 컬럼 검사 ────────────────────────────────────────────────
-REQUIRED_COLS = {"ip.src", "ip.dst", "tcp.dstport"}
-MAX_MB = 100
+# 포맷 A (PCAP 추출) 또는 포맷 B (UNSW-NB15) 둘 중 하나면 통과
+REQUIRED_COLS_A = {"ip.src", "ip.dst", "tcp.dstport"}
+REQUIRED_COLS_B = {"srcip", "dstip", "dsport"}
+MAX_MB = 1000
 
 def validate_file(uploaded_file) -> tuple:
     size_mb = uploaded_file.size / (1024 * 1024)
@@ -185,16 +187,18 @@ def validate_file(uploaded_file) -> tuple:
     try:
         peek = pd.read_csv(uploaded_file, nrows=2, on_bad_lines="skip")
         uploaded_file.seek(0)
-        missing = REQUIRED_COLS - set(peek.columns)
-        if missing:
+        cols = set(peek.columns)
+        ok_a = REQUIRED_COLS_A.issubset(cols)
+        ok_b = REQUIRED_COLS_B.issubset(cols)
+        if not ok_a and not ok_b:
             return False, (
-                f"⚠️ 필요한 컬럼이 없습니다: {', '.join(sorted(missing))}\n\n"
-                f"필요 컬럼: ip.src · ip.dst · tcp.dstport · frame.len · ip.proto"
+                "⚠️ 필요한 컬럼이 없습니다.\n\n"
+                "포맷 A (PCAP 추출): ip.src · ip.dst · tcp.dstport\n"
+                "포맷 B (UNSW-NB15): srcip · dstip · dsport"
             )
     except Exception as e:
         return False, f"⚠️ 파일을 읽을 수 없습니다: {str(e)}"
     return True, ""
-
 def go_home():
     st.session_state["page"] = "upload"
     st.session_state["df"] = None
