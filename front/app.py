@@ -1,5 +1,8 @@
 import os
 import base64
+from pathlib import Path
+from PIL import Image
+
 import streamlit as st
 import pandas as pd
 from dotenv import load_dotenv
@@ -29,6 +32,11 @@ def get_logo_b64() -> str:
         with open(logo_path, "rb") as f:
             return base64.b64encode(f.read()).decode()
     return ""
+
+BASE_DIR = Path(__file__).resolve().parent
+
+def get_attack_graph():
+    return Image.open(BASE_DIR / "graph_example.png")
 
 # ── 페이지 설정 ───────────────────────────────────────────────────
 st.set_page_config(
