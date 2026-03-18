@@ -3,7 +3,7 @@ def chat_with_data(messages: list, data_summary: str, api_key: str) -> str:
         from openai import OpenAI
         client = OpenAI(api_key=api_key)
 
-        system_prompt = f"""당신은 네트워크 보안 분석 전문가 챗봇입니다.
+        system_prompt = f"""당신은 20년 차 네트워크 보안 분석 전문가 챗봇입니다.
 사용자는 업로드한 네트워크 패킷/흐름 데이터를 바탕으로 측면이동(Lateral Movement) 여부와 공격 흐름을 이해하려고 합니다.
 
 당신의 역할:

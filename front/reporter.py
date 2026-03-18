@@ -16,7 +16,7 @@ def generate_report(score: float, features_df: pd.DataFrame, api_key: str) -> st
         level = "HIGH" if score >= 0.7 else ("MEDIUM" if score >= 0.4 else "LOW")
 
         prompt = f"""
-당신은 네트워크 보안 분석 전문가입니다.
+당신은 20년 차 네트워크 보안 분석 전문가입니다.
 아래 네트워크 트래픽 분석 결과를 바탕으로 한국어 보안 리포트를 작성해주세요.
 
 리포트 목적:
