@@ -43,62 +43,74 @@ def generate_advanced_data():
     print("🏢 [내부망 동적 시나리오] 20가지 패턴 + 5-Hop 연쇄 주입 시작...")
     
     if not os.path.exists(BASE_DATA_PATH):
-        print(f"❌ 원본 파일을 찾을 수 없습니다: {BASE_DATA_PATH}"); return
+        print(f"❌ 에러: 원본 파일({BASE_DATA_PATH})이 없습니다."); return
 
     df_base = pd.read_csv(BASE_DATA_PATH, low_memory=False)
-    scenarios = get_attack_scenarios()
     
     internal_ips = [f'149.171.1.{i}' for i in range(1, 255)]
     new_rows = []
-    current_time = 1421927400
+    current_time = 1421927400 # 기준 시간
+    
     target_count = 100000 
-
-    # [Scenario A] 5~10단계 연쇄 이동 (70%)
-    print("🔗 5-Hop 이상 연쇄 경로 강제 생성 중 (20패턴 적용)...")
+    
+    # 1. [연쇄 이동] 5~10단계 체인 강제 생성 (전체의 70%)
+    print("🔗 [필수] 5-Hop 이상 연쇄 경로 주입 중 (기차 연결 로직)...")
     while len(new_rows) < (target_count * 0.7):
+        # 5단계 이상 보장 (노드는 6개 이상 필요)
         chain_len = random.randint(5, 10) 
         path = random.sample(internal_ips, chain_len + 1)
+        
+        # 각 체인은 고유한 시작 시간을 가짐
         chain_time = current_time + random.randint(0, 100000)
         
         for i in range(len(path) - 1):
-            s = random.choice(scenarios) # 20가지 중 하나 무작위 선택
-            chain_time += random.randint(120, 600)
+            # 핵심: 앞 단계의 dstip가 다음 단계의 srcip가 됨 (A->B, B->C)
+            src = path[i]
+            dst = path[i+1]
+            
+            # 시간도 순차적으로 증가 (중요: 그래야 경로 추적이 됨)
+            chain_time += random.randint(120, 600) 
             
             new_rows.append({
-                'srcip': path[i], 'dstip': path[i+1], 'dsport': s['port'],
-                'dur': random.uniform(*s['dur']), 
-                'sbytes': random.randint(*s['sbytes']),
-                'dbytes': random.randint(*s['sbytes']) // 2,
+                'srcip': src, 'dstip': dst,
+                'dsport': random.choice(CRITICAL_PORTS),
+                'dur': random.uniform(0.1, 3.0),
+                'sbytes': random.randint(2000, 50000),
+                'dbytes': random.randint(1000, 25000),
                 'stime': chain_time, 'ltime': chain_time + 1,
                 'proto': 'tcp', 'state': 'CON', 'label': 1,
-                'attack_cat': 'Worms', 'risk_level': 5,
-                'risk_score': random.randint(90, 100) # 연쇄 이동은 최상위 위험
+                'attack_cat': 'Worms', # 체인 식별자
+                'risk_level': 5,
+                'risk_score': random.randint(90, 100) # 대시보드용 고득점
             })
 
-    # [Scenario B] 내부망 단발성 공격 (30%)
-    print("🎯 단발성 내부망 공격 추가 중...")
+    # 2. [단발성] 내부망 단발성 공격 (전체의 30%)
+    print("🎯 내부망 단발성 공격 추가 중...")
     while len(new_rows) < target_count:
-        s = random.choice(scenarios)
+        src, dst = random.sample(internal_ips, 2)
         attack_time = current_time + random.randint(0, 200000)
         new_rows.append({
-            'srcip': random.choice(internal_ips), 'dstip': random.choice(internal_ips),
-            'dsport': s['port'], 'dur': random.uniform(*s['dur']),
-            'sbytes': random.randint(*s['sbytes']), 'dbytes': random.randint(*s['sbytes']) // 2,
+            'srcip': src, 'dstip': dst,
+            'dsport': random.choice(CRITICAL_PORTS),
+            'dur': random.uniform(0.1, 2.0),
+            'sbytes': random.randint(1000, 20000),
+            'dbytes': random.randint(500, 10000),
             'stime': attack_time, 'ltime': attack_time + 1,
             'proto': 'tcp', 'state': 'CON', 'label': 1,
-            'attack_cat': 'Lateral Movement', 'risk_level': 5,
+            'attack_cat': 'Lateral Movement',
+            'risk_level': 5,
             'risk_score': random.randint(80, 89)
         })
 
-    # 3. 데이터 결합 및 대시보드 피처 생성
+    # 3. 데이터 결합 및 피처 추가
     df_gen = pd.DataFrame(new_rows)
     df_final = pd.concat([df_base, df_gen], ignore_index=True).fillna(0)
     
-    print("🛠️ 대시보드 전용 지표(Critical Port, Score, Internal) 추가 중...")
-    df_final['is_internal'] = 1 
+    # [추가 피처] 위험 포트 여부 및 내부망 여부
+    df_final['is_internal'] = 1 # 우리가 만든 건 다 내부망 대역
     df_final['is_critical_port'] = df_final['dsport'].isin(CRITICAL_PORTS).astype(int)
     
-    # 기존 데이터의 risk_score 보정
+    # [리스크 점수 보정] 기존 데이터 점수 채우기
     mask = df_final['risk_score'] == 0
     df_final.loc[mask, 'risk_score'] = df_final.loc[mask, 'risk_level'].apply(
         lambda x: random.randint(0, 15) if x == 0 else
@@ -107,12 +119,13 @@ def generate_advanced_data():
                   random.randint(65, 80) if x == 3 else random.randint(80, 85)
     )
 
-    # 4. 저장
+    # 4. 저장 (엑셀이 열려있으면 에러남)
     try:
         df_final.to_csv(SAVE_DATA_PATH, index=False)
-        print(f"\n✅ 성공! 20개 패턴이 적용된 {len(df_final):,}행 데이터 저장 완료.")
+        print(f"\n✅ 완성! 총 {len(df_final):,} 행 저장 완료.")
+        print(f"🚩 파일: {SAVE_DATA_PATH}")
     except PermissionError:
-        print("\n❌ 에러: CSV를 닫고 다시 실행해 주세요!")
+        print("\n❌ 실패: CSV 파일을 닫고 다시 실행하세요!")
 
 if __name__ == "__main__":
-    generate_advanced_data()
+    generate_guaranteed_chains()
