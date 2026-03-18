@@ -85,34 +85,37 @@ def load_csv(file) -> pd.DataFrame:
 
 def aggregate_edges(df: pd.DataFrame) -> pd.DataFrame:
     """
-    IP쌍 + 포트 단위로 집계 (그래프 엣지용)
-    너무 많은 엣지가 생기지 않도록 상위 연결만 추출
+    IP쌍 + 포트 단위로 집계 후 그래프용 엣지 200개, 노드 150개로 제한
     """
+    # ① DestPort를 먼저 int로 변환 후 집계
+    df2 = df.copy()
+    df2["DestPort"] = pd.to_numeric(df2["DestPort"], errors="coerce").fillna(0).astype(int)
+
     grp = (
-        df.groupby(["SourceAddress", "DestAddress", "DestPort", "Application"], dropna=False)
+        df2.groupby(["SourceAddress", "DestAddress", "DestPort", "Application"], dropna=False)
         .agg(Packets=("Bytes", "count"), Bytes=("Bytes", "sum"))
         .reset_index()
     )
-    # 측면이동 포트 우선, 나머지는 상위 바이트 기준 제한
-    lateral = grp[grp["DestPort"].isin(LATERAL_PORTS)]
-    normal  = grp[~grp["DestPort"].isin(LATERAL_PORTS)].nlargest(30, "Bytes")
-    result  = pd.concat([lateral, normal]).drop_duplicates()
-    result["DestPort"] = result["DestPort"].fillna(0).astype(int)
 
-    # 그래프 렌더링 성능 — 엣지 200개, 노드 150개 초과 시 상위만 유지
-    if len(result) > 200:
-        lat_part    = result[result["DestPort"].isin(LATERAL_PORTS)]
-        normal_part = result[~result["DestPort"].isin(LATERAL_PORTS)].nlargest(
-            max(0, 200 - len(lat_part)), "Bytes"
-        )
-        result = pd.concat([lat_part, normal_part]).drop_duplicates()
+    # ② 측면이동 포트 우선 분리 — 각각 최대 개수 제한
+    MAX_LATERAL = 150  # 측면이동 엣지 최대
+    MAX_NORMAL  = 50   # 일반 트래픽 엣지 최대
 
+    lateral = grp[grp["DestPort"].isin(LATERAL_PORTS)].nlargest(MAX_LATERAL, "Bytes")
+    normal  = grp[~grp["DestPort"].isin(LATERAL_PORTS)].nlargest(MAX_NORMAL, "Bytes")
+
+    # ③ 합치고 상위 200개 제한
+    result = pd.concat([lateral, normal]).drop_duplicates().reset_index(drop=True)
+
+    # ④ 노드 150개 제한 — 측면이동 IP 우선 보존
     all_ips = set(result["SourceAddress"]) | set(result["DestAddress"])
     if len(all_ips) > 150:
-        # 측면이동 연관 IP 우선 보존
-        lateral_ips = set(result[result["DestPort"].isin(LATERAL_PORTS)]["SourceAddress"]) |                       set(result[result["DestPort"].isin(LATERAL_PORTS)]["DestAddress"])
-        keep_ips = lateral_ips
-        for _, row in result.nlargest(150, "Bytes").iterrows():
+        lateral_ips = (
+            set(result[result["DestPort"].isin(LATERAL_PORTS)]["SourceAddress"]) |
+            set(result[result["DestPort"].isin(LATERAL_PORTS)]["DestAddress"])
+        )
+        keep_ips = set(lateral_ips)
+        for _, row in result.nlargest(200, "Bytes").iterrows():
             keep_ips.add(row["SourceAddress"])
             keep_ips.add(row["DestAddress"])
             if len(keep_ips) >= 150:
@@ -120,7 +123,7 @@ def aggregate_edges(df: pd.DataFrame) -> pd.DataFrame:
         result = result[
             result["SourceAddress"].isin(keep_ips) &
             result["DestAddress"].isin(keep_ips)
-        ]
+        ].reset_index(drop=True)
 
     return result
 
@@ -179,9 +182,11 @@ def build_data_summary(df: pd.DataFrame, risk_scores: dict) -> str:
         "",
         "[IP별 위험도 (상위 15개)]",
     ]
+    src_counts = df.groupby("SourceAddress").size()
+    dst_counts2 = df.groupby("DestAddress").size()
     for ip, s in sorted(risk_scores.items(), key=lambda x: -x[1])[:15]:
-        src_cnt = len(df[df["SourceAddress"] == ip])
-        dst_cnt = len(df[df["DestAddress"] == ip])
+        src_cnt = int(src_counts.get(ip, 0))
+        dst_cnt = int(dst_counts2.get(ip, 0))
         lines.append(f"  {ip}: {risk_label(s)} ({s}) | 발신 {src_cnt:,}건 / 수신 {dst_cnt:,}건")
 
     lines += ["", "[측면이동 의심 연결 (상위 10개)]"]
