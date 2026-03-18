@@ -315,6 +315,41 @@ def attack_page():
         st.markdown(f"**총 패킷:** {len(df):,}건")
         st.markdown(f"**의심 연결:** {len(lateral_df):,}건")
         st.markdown(f"**고위험 IP:** {len(high_risk)}개")
+
+        # ── AI 분석 결과 패널 ────────────────────────
+        if ml_result:
+            st.markdown("---")
+            st.markdown("### 🤖 AI 분석 결과")
+            risk_score = ml_result.get("risk_score", 0)
+            high_cnt   = ml_result.get("high_risk_count", 0)
+            sus_host   = ml_result.get("suspicious_host", "N/A")
+
+            # 위험도 색상
+            if risk_score >= 0.7:
+                score_color = "#FF4B4B"
+                score_label = "HIGH"
+            elif risk_score >= 0.4:
+                score_color = "#FFA500"
+                score_label = "MEDIUM"
+            else:
+                score_color = "#00CC88"
+                score_label = "LOW"
+
+            st.markdown(f"""
+            <div style="background:#1a1a2e;border:1px solid #2a2a4a;border-radius:8px;padding:12px 14px;margin:6px 0">
+                <div style="color:#888;font-size:11px;margin-bottom:4px">평균 위험도</div>
+                <div style="color:{score_color};font-size:22px;font-weight:bold">{risk_score} <span style="font-size:12px">{score_label}</span></div>
+            </div>
+            <div style="background:#1a1a2e;border:1px solid #2a2a4a;border-radius:8px;padding:12px 14px;margin:6px 0">
+                <div style="color:#888;font-size:11px;margin-bottom:4px">AI 위협 탐지</div>
+                <div style="color:#FF4B4B;font-size:22px;font-weight:bold">{high_cnt:,}<span style="color:#888;font-size:12px"> 건</span></div>
+            </div>
+            <div style="background:#1a1a2e;border:1px solid #2a2a4a;border-radius:8px;padding:12px 14px;margin:6px 0">
+                <div style="color:#888;font-size:11px;margin-bottom:4px">주요 의심 호스트</div>
+                <div style="color:#e0e0ff;font-size:13px;font-family:monospace;word-break:break-all">{sus_host}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
         st.markdown("---")
         if st.button("🏠 처음으로", use_container_width=True, key="sb_home"):
             go_home()
@@ -380,9 +415,6 @@ def attack_page():
         ai_summary = ml_result.get("summary_text", "") if ml_result else "AI 분석 데이터 없음"
         combined_summary = f"{ai_summary}\n\n[상세 지표]\n{rule_summary}"
 
-        if user_input:
-            # combined_summary를 전달하여 GPT가 AI 결과를 읽게 함
-            reply = chat_with_data(st.session_state["chat_history"], combined_summary, api_key)
         if not api_key:
             st.warning("💡 `.env`에 `OPENAI_API_KEY`를 추가하면 챗봇을 사용할 수 있습니다.")
 
@@ -471,21 +503,26 @@ def normal_page():
     _, mid, _ = st.columns([1, 2, 1])
     with mid:
         st.markdown("""
-        <div style='text-align:center; padding:100px 0 60px'>
+        <div style='text-align:center; padding:80px 0 40px'>
             <div style='font-size:64px'>✅</div>
             <div style='font-size:22px; color:#3a6a3a; margin-top:20px; font-weight:600;'>
                 측면이동 공격이 탐지되지 않았습니다
             </div>
             <div style='font-size:14px; color:#555; margin-top:16px; line-height:1.9'>
-                업로드된 파일에서 측면이동 의심 트래픽이 발견되지 않았습니다.<br>
-                측면이동 데이터가 포함된 파일을 다시 업로드해주세요.
+                AI 모델이 해당 파일에서 측면이동 의심 트래픽을 감지하지 못했습니다.<br>
+                모델 판단이 잘못됐을 수 있으니, 직접 그래프를 확인해보세요.
             </div>
         </div>
         """, unsafe_allow_html=True)
-        _, c, _ = st.columns([1, 1, 1])
-        with c:
+
+        c1, c2 = st.columns(2)
+        with c1:
             if st.button("🏠 처음으로", use_container_width=True):
                 go_home()
+        with c2:
+            if st.button("🔍 그래도 분석 확인하기", use_container_width=True):
+                st.session_state["page"] = "attack"
+                st.rerun()
 
 
 # ── 라우터 ────────────────────────────────────────────────────────

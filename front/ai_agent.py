@@ -19,53 +19,88 @@ class SecurityAIAgent:
         self.feature_types = booster.feature_types
 
     def analyze(self, df):
-        # 1. 컬럼명 매핑
+        # 1. 내부 컬럼명 → 모델 피처명으로 매핑
+        # 모델 피처: sport, dsport, proto, sbytes, service 등 원본 UNSW-NB15 컬럼명
+        # is_internal, is_critical_port 는 이미 동일한 이름이므로 rename 불필요
         rename_map = {
-            "SourceAddress": "srcip",
-            "DestAddress": "dstip",
-            "DestPort": "dsport",
-            "SrcPort": "sport",
-            "Bytes": "sbytes",
-            "ProtoRaw": "proto",
-            "Application": "service"
+            "SrcPort":     "sport",
+            "DestPort":    "dsport",
+            "ProtoRaw":    "proto",
+            "Bytes":       "sbytes",
+            "Application": "service",
         }
         X = df.rename(columns=rename_map).copy()
 
-        # ---------------- [ 🔥 이 부분이 핵심 해결 포인트 ] ----------------
-        # 이름이 같은 컬럼이 있으면 reindex가 불가능하므로 중복을 제거합니다.
+        # 중복 컬럼 제거
         if X.columns.duplicated().any():
             X = X.loc[:, ~X.columns.duplicated()]
-        # ----------------------------------------------------------------
 
-        # 2. 데이터 규격 강제 일치 (순서 정렬 및 누락 컬럼 보충)
-        # 이제 중복이 없으므로 reindex가 정상 작동합니다.
+        # 2. 모델이 요구하는 피처만 추출 (없는 컬럼은 0으로 채움)
         X = X.reindex(columns=self.expected_features, fill_value=0)
 
         # 3. 데이터 타입 완벽 일치
         if self.feature_types:
             for col, f_type in zip(self.expected_features, self.feature_types):
                 if f_type == 'c':
-                    X[col] = X[col].astype('category')
+                    # 카테고리형 — 문자열로 변환 후 category로 캐스팅
+                    # (숫자 0으로 fill된 값도 문자열 "0"으로 처리)
+                    X[col] = X[col].astype(str).astype('category')
                 else:
                     X[col] = pd.to_numeric(X[col], errors='coerce').fillna(0).astype(float)
 
         # 4. AI 예측 수행
         try:
             preds = self.model.predict(X[self.expected_features])
-            df['predicted_risk'] = self.le_y.inverse_transform(preds)
-            
-            high_risk_df = df[df['predicted_risk'] >= 4]
-            avg_risk = round(df['predicted_risk'].mean(), 2)
-            
+
+            # le_y가 있으면 역변환, 없으면 raw 예측값 사용
+            if self.le_y is not None:
+                labels = self.le_y.inverse_transform(preds)
+            else:
+                labels = preds
+
+            df = df.copy()
+            df["predicted_label"] = labels
+
+            # 숫자형이면 threshold 기반, 문자열이면 공격 키워드 기반 판단
+            sample = labels[0]
+            if isinstance(sample, (int, float, np.integer, np.floating)):
+                # 숫자: risk_score 기준 (4 이상 = 고위험)
+                df["predicted_risk_num"] = pd.to_numeric(df["predicted_label"], errors="coerce").fillna(0)
+                high_risk_df = df[df["predicted_risk_num"] >= 4]
+                avg_risk = round(float(df["predicted_risk_num"].mean()), 2)
+            else:
+                # 문자열: Normal이 아닌 것 = 공격
+                ATTACK_KEYWORDS = {"lateral", "exploit", "backdoor", "shellcode",
+                                   "reconnaissance", "fuzzers", "worms", "dos",
+                                   "analysis", "generic"}
+                def is_attack(label):
+                    if str(label).strip().lower() == "normal": return False
+                    if str(label).strip() in ("0", ""): return False
+                    return True
+                high_risk_df = df[df["predicted_label"].apply(is_attack)]
+                avg_risk = round(len(high_risk_df) / max(len(df), 1), 2)
+
+            suspicious_host = (
+                high_risk_df["SourceAddress"].mode()[0]
+                if not high_risk_df.empty and "SourceAddress" in high_risk_df.columns
+                else "N/A"
+            )
+
             return {
-                "lm_suspected": len(high_risk_df) > 0,
-                "risk_score": avg_risk,
-                "suspicious_host": high_risk_df['SourceAddress'].mode()[0] if not high_risk_df.empty else "N/A",
-                "summary_text": f"AI 분석 완료: 위협 탐지 {len(high_risk_df)}건 (평균 위험도: {avg_risk})"
+                "lm_suspected":    len(high_risk_df) > 0,
+                "risk_score":      avg_risk,
+                "high_risk_count": len(high_risk_df),
+                "suspicious_host": suspicious_host,
+                "summary_text": (
+                    f"AI(XGBoost) 분석 완료\n"
+                    f"- 위협 탐지: {len(high_risk_df):,}건 / 전체 {len(df):,}건\n"
+                    f"- 평균 위험도: {avg_risk}\n"
+                    f"- 주요 의심 호스트: {suspicious_host}"
+                )
             }
         except Exception as e:
             return {
                 "lm_suspected": False,
-                "risk_score": 0.0,
+                "risk_score":   0.0,
                 "summary_text": f"⚠️ AI 판별 에러: {str(e)}"
             }
