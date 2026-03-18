@@ -350,7 +350,7 @@ def attack_page():
     with graph_col:
         st.markdown('<div class="section-title">네트워크 그래프 — 노드/엣지 클릭 시 세부정보</div>',
                     unsafe_allow_html=True)
-        st.components.v1.html(build_graph_html(edge_df, risk_scores), height=520)
+        st.components.v1.html(build_graph_html(edge_df, risk_scores), height=620)
 
     with chat_col:
         st.markdown('<div class="section-title">🤖 데이터 분석 챗봇</div>', unsafe_allow_html=True)
