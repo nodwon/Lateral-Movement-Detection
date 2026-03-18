@@ -1,0 +1,10 @@
+openai
+python-dotenv
+streamlit
+pandas
+scikit-learn
+joblib
+nose
+xgboost
+seaborn
+matplotlib  

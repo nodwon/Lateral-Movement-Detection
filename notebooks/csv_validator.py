@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 
 # 1. 파일 경로 설정
-file_path = r"C:\Users\ez\Downloads\UNSW_NB15_7Hop_Augmented.csv"
+file_path
 
 def analyze_phase1_data(path):
     print(f"📂 데이터를 불러오는 중: {path}")
@@ -41,7 +41,16 @@ def analyze_phase1_data(path):
         
         if max_conn >= 20: score += 50
         elif max_conn >= 5: score += 20
+        
+        # [추가 제안 로직] 내부망 통신 비중 체크
+        internal_prefix = '149.171.' # 프로젝트에서 사용하는 내부 IP 대역
+        internal_df = df[df[src_ip].str.startswith(internal_prefix) & df[dst_ip].str.startswith(internal_prefix)]
 
+        internal_ratio = (len(internal_df) / len(df)) * 100
+        print(f"🏠 내부망 간 통신(East-West) 비중: {internal_ratio:.2f}%")
+
+        if internal_ratio < 10:
+            print("⚠️ 주의: 전체 데이터 중 내부 통신 비중이 너무 낮습니다. 그래프 학습이 어려울 수 있습니다.")
         # 5. 결과 보고
         print("\n" + "="*50)
         print(f"💎 데이터 품질 분석 결과: {score}점 / 100점")
