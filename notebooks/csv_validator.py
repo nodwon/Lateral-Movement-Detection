@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 
 # 1. 파일 경로 설정
-file_path = r"C:\Users\ez\Downloads\OneDrive_2026-03-17\UNSW-NB15_1.csv"
+file_path = r"C:\Users\ez\Downloads\UNSW_NB15_7Hop_Augmented.csv"
 
 def analyze_phase1_data(path):
     print(f"📂 데이터를 불러오는 중: {path}")
