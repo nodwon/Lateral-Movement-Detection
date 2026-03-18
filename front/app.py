@@ -3,15 +3,29 @@ import base64
 import streamlit as st
 import pandas as pd
 from dotenv import load_dotenv
-
+from io import BytesIO
+from ai_agent import SecurityAIAgent
 from analysis import (
-    load_csv, aggregate_edges, compute_risk,
+    load_csv, load_pcap, aggregate_edges, compute_risk,
     risk_label, build_data_summary, LATERAL_PORTS
 )
-from graph import build_graph_html
+from graph import (build_graph_html, pcap_to_edge_df)
 from chatbot import chat_with_data
 from sample_data import generate_sample_data
 
+# ── 페이지 설정  ───────────────────────
+st.set_page_config(
+    page_title="측면 공격 시각화",
+    page_icon="🛡️",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+# 에이전트 초기화 (함수 내 set_page_config 삭제)
+@st.cache_resource
+def load_agent():
+    return SecurityAIAgent()
+
+agent = load_agent()
 # ── 환경변수 ──────────────────────────────────────────────────────
 load_dotenv()
 def get_api_key() -> str:
@@ -30,13 +44,6 @@ def get_logo_b64() -> str:
             return base64.b64encode(f.read()).decode()
     return ""
 
-# ── 페이지 설정 ───────────────────────────────────────────────────
-st.set_page_config(
-    page_title="측면 공격 시각화",
-    page_icon="🛡️",
-    layout="wide",
-    initial_sidebar_state="collapsed"
-)
 
 LOGO_B64 = get_logo_b64()
 
@@ -184,6 +191,14 @@ def validate_file(uploaded_file) -> tuple:
     size_mb = uploaded_file.size / (1024 * 1024)
     if size_mb > MAX_MB:
         return False, f"⚠️ 파일 크기가 {size_mb:.1f}MB입니다.\n{MAX_MB}MB 이하로 줄여서 올려주세요."
+    # 확장자 확인
+    file_name = uploaded_file.name.lower()
+    
+    # 1. PCAP 계열인 경우: CSV 읽기(pd.read_csv)를 건너뜁니다.
+    if file_name.endswith(('.pcap', '.pcapng')):
+        # 확장자만 확인하고 바로 통과
+        return True, ""
+    
     try:
         peek = pd.read_csv(uploaded_file, nrows=2, on_bad_lines="skip")
         uploaded_file.seek(0)
@@ -191,11 +206,7 @@ def validate_file(uploaded_file) -> tuple:
         ok_a = REQUIRED_COLS_A.issubset(cols)
         ok_b = REQUIRED_COLS_B.issubset(cols)
         if not ok_a and not ok_b:
-            return False, (
-                "⚠️ 필요한 컬럼이 없습니다.\n\n"
-                "포맷 A (PCAP 추출): ip.src · ip.dst · tcp.dstport\n"
-                "포맷 B (UNSW-NB15): srcip · dstip · dsport"
-            )
+            return False, "⚠️ 필요한 컬럼이 없습니다."
     except Exception as e:
         return False, f"⚠️ 파일을 읽을 수 없습니다: {str(e)}"
     return True, ""
@@ -226,13 +237,8 @@ def upload_page():
         if True:
             uploaded = st.file_uploader(
                 "파일 업로드",
-                type=["csv"],
+                type=["csv", "pcap"],
                 label_visibility="collapsed",
-            )
-            st.markdown(
-                "<div style='text-align:center;color:#7a5a4a;font-size:13px;margin:6px 0 18px'>"
-                "PCAP에서 추출한 CSV 파일을 올려주세요</div>",
-                unsafe_allow_html=True
             )
 
             st.markdown("<div style='border-top:1px solid #c8a090;margin:8px 0 16px'></div>",
@@ -259,25 +265,27 @@ def upload_page():
                 ip.proto &nbsp;·&nbsp; frame.len &nbsp;·&nbsp; tcp.dstport
             </div>
             """, unsafe_allow_html=True)
-
             if uploaded is not None:
                 ok, err_msg = validate_file(uploaded)
                 if not ok:
                     st.markdown(f'<div class="error-box">{err_msg}</div>', unsafe_allow_html=True)
                 else:
-                    with st.spinner("📡 분석 중..."):
+                    with st.spinner("📡 AI 에이전트가 침투 흔적을 분석 중..."):
                         try:
-                            df = load_csv(uploaded)
+                            # 파일 로드 및 세션 저장
+                            df = load_pcap(uploaded) if uploaded.name.endswith(('pcap', 'pcapng')) else load_csv(uploaded)
                             st.session_state["df"] = df
                             st.session_state["chat_history"] = []
-                            lateral_count = df[df["DestPort"].isin(LATERAL_PORTS)].shape[0]
-                            st.session_state["page"] = "attack" if lateral_count > 0 else "normal"
+                            
+                            # 🚀 중요: 미리 로드된 전역 'agent'를 사용하여 분석
+                            ml_result = agent.analyze(df)
+                            st.session_state["ml_result"] = ml_result
+                            
+                            # AI 판단 결과(lm_suspected)에 따라 페이지 이동
+                            st.session_state["page"] = "attack" if ml_result["lm_suspected"] else "normal"
                             st.rerun()
                         except Exception as e:
-                            st.markdown(
-                                f'<div class="error-box">⚠️ 파일 처리 오류: {str(e)}</div>',
-                                unsafe_allow_html=True
-                            )
+                            st.error(f"⚠️ 분석 오류 발생: {e}")
 
 
 
@@ -293,8 +301,12 @@ def attack_page():
     </style>""", unsafe_allow_html=True)
 
     df = st.session_state.get("df")
-    edge_df, risk_scores, lateral_df, high_risk, data_summary = load_analysis(df)
+    ml_result = st.session_state.get("ml_result")
+
+    edge_df, risk_scores, lateral_df, high_risk, rule_summary = load_analysis(df)
     api_key = get_api_key()
+    ai_summary = ml_result.get("summary_text", "") if ml_result else ""
+    combined_summary = f"{ai_summary}\n\n[세부 지표]\n{rule_summary}"
 
     # 사이드바
     with st.sidebar:
@@ -350,11 +362,27 @@ def attack_page():
     with graph_col:
         st.markdown('<div class="section-title">네트워크 그래프 — 노드/엣지 클릭 시 세부정보</div>',
                     unsafe_allow_html=True)
+        
+        if st.session_state.get("file_type") == "pcap":
+            file_bytes = st.session_state.get("file_bytes")
+
+            if file_bytes:
+                pcap_file = BytesIO(file_bytes)
+                edge_df = pcap_to_edge_df(pcap_file)
+
         st.components.v1.html(build_graph_html(edge_df, risk_scores), height=620)
 
     with chat_col:
+        
         st.markdown('<div class="section-title">🤖 데이터 분석 챗봇</div>', unsafe_allow_html=True)
+    
+        # AI 에이전트 요약과 규칙 기반 요약을 합침
+        ai_summary = ml_result.get("summary_text", "") if ml_result else "AI 분석 데이터 없음"
+        combined_summary = f"{ai_summary}\n\n[상세 지표]\n{rule_summary}"
 
+        if user_input:
+            # combined_summary를 전달하여 GPT가 AI 결과를 읽게 함
+            reply = chat_with_data(st.session_state["chat_history"], combined_summary, api_key)
         if not api_key:
             st.warning("💡 `.env`에 `OPENAI_API_KEY`를 추가하면 챗봇을 사용할 수 있습니다.")
 
@@ -402,8 +430,8 @@ def attack_page():
                 st.session_state["chat_history"].append({"role": "user", "content": user_input})
                 with st.spinner("분석 중..."):
                     reply = chat_with_data(
-                        st.session_state["chat_history"], data_summary, api_key
-                    )
+                    st.session_state["chat_history"], combined_summary, api_key
+            )                    
                 st.session_state["chat_history"].append({"role": "assistant", "content": reply})
                 st.rerun()
 

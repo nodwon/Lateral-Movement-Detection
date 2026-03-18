@@ -1,4 +1,5 @@
 import pandas as pd
+from scapy.all import rdpcap, IP, TCP, UDP
 
 # 측면이동 의심 포트
 LATERAL_PORTS = {
@@ -17,6 +18,69 @@ LATERAL_PORTS = {
 
 PROTO_MAP = {6: "TCP", 17: "UDP", 1: "ICMP", 2: "IGMP"}
 
+def load_pcap(pcap_file) -> pd.DataFrame:
+    """
+    PCAP
+    """
+
+    try:
+        packets = rdpcap(pcap_file)
+    except Exception as e:
+        raise ValueError(f"PCAP 파일을 읽을 수 없습니다: {e}")
+
+    rows = []
+
+    for pkt in packets:
+
+        # IP 패킷만 처리
+        if IP not in pkt:
+            continue
+
+        src = pkt[IP].src
+        dst = pkt[IP].dst
+        proto_num = pkt[IP].proto
+
+        proto = PROTO_MAP.get(proto_num, "OTHER")
+        src_port = None
+        dst_port = None
+
+        if TCP in pkt:
+            src_port = pkt[TCP].sport
+            dst_port = pkt[TCP].dport
+            proto = "TCP"
+        elif UDP in pkt:
+            src_port = pkt[UDP].sport
+            dst_port = pkt[UDP].dport
+            proto = "UDP"
+
+        rows.append({
+            "SourceAddress": src,
+            "DestAddress": dst,
+            "SrcPort": src_port,
+            "DestPort": dst_port,
+            "Protocol": proto_num,
+            "Application": proto,
+            "Bytes": len(pkt)
+        })
+
+    if not rows:
+        raise ValueError("유효한 IP 패킷이 없습니다.")
+
+    df = pd.DataFrame(rows)
+
+    # ── 공통 후처리 (load_csv와 동일) ────────────────────────────────
+    df["DestPort"] = pd.to_numeric(df["DestPort"], errors="coerce")
+    df["SrcPort"]  = pd.to_numeric(df["SrcPort"], errors="coerce")
+    df["Bytes"]    = pd.to_numeric(df["Bytes"], errors="coerce").fillna(0)
+
+    # 측면 이동 포트 → Application 덮어쓰기
+    df["Application"] = df.apply(
+        lambda r: LATERAL_PORTS.get(int(r["DestPort"]), r["Application"])
+        if pd.notna(r["DestPort"]) else r["Application"],
+        axis=1
+    )
+
+    return df
 
 def load_csv(file) -> pd.DataFrame:
     """
