@@ -3,12 +3,13 @@ import base64
 import streamlit as st
 import pandas as pd
 from dotenv import load_dotenv
+from io import BytesIO
 
 from analysis import (
-    load_csv, aggregate_edges, compute_risk,
+    load_csv, load_pcap, aggregate_edges, compute_risk,
     risk_label, build_data_summary, LATERAL_PORTS
 )
-from graph import build_graph_html
+from graph import (build_graph_html, pcap_to_edge_df)
 from chatbot import chat_with_data
 from sample_data import generate_sample_data
 
@@ -226,13 +227,8 @@ def upload_page():
         if True:
             uploaded = st.file_uploader(
                 "파일 업로드",
-                type=["csv"],
+                type=["csv", "pcap"],
                 label_visibility="collapsed",
-            )
-            st.markdown(
-                "<div style='text-align:center;color:#7a5a4a;font-size:13px;margin:6px 0 18px'>"
-                "PCAP에서 추출한 CSV 파일을 올려주세요</div>",
-                unsafe_allow_html=True
             )
 
             st.markdown("<div style='border-top:1px solid #c8a090;margin:8px 0 16px'></div>",
@@ -259,25 +255,40 @@ def upload_page():
                 ip.proto &nbsp;·&nbsp; frame.len &nbsp;·&nbsp; tcp.dstport
             </div>
             """, unsafe_allow_html=True)
-
             if uploaded is not None:
-                ok, err_msg = validate_file(uploaded)
-                if not ok:
-                    st.markdown(f'<div class="error-box">{err_msg}</div>', unsafe_allow_html=True)
-                else:
-                    with st.spinner("📡 분석 중..."):
-                        try:
+                with st.spinner("📡 분석 중..."):
+                    try:
+                        if uploaded.name.endswith((".pcap", ".pcapng")):
+                            file_bytes = uploaded.read()
+
+                            st.session_state["file_type"] = "pcap"
+                            st.session_state["file_bytes"] = file_bytes
+                            df = load_pcap(BytesIO(file_bytes))
+
+                        else:
+                            ok, err_msg = validate_file(uploaded)
+                            if not ok:
+                                st.markdown(
+                                    f'<div class="error-box">{err_msg}</div>',
+                                    unsafe_allow_html=True
+                                )
+                                return
+
+                            st.session_state["file_type"] = "csv"
+                            st.session_state["file_bytes"] = file_bytes
+            
                             df = load_csv(uploaded)
-                            st.session_state["df"] = df
-                            st.session_state["chat_history"] = []
-                            lateral_count = df[df["DestPort"].isin(LATERAL_PORTS)].shape[0]
-                            st.session_state["page"] = "attack" if lateral_count > 0 else "normal"
-                            st.rerun()
-                        except Exception as e:
-                            st.markdown(
-                                f'<div class="error-box">⚠️ 파일 처리 오류: {str(e)}</div>',
-                                unsafe_allow_html=True
-                            )
+
+                        st.session_state["df"] = df
+                        st.session_state["chat_history"] = []
+                        st.session_state["page"] = "attack"
+                        st.rerun()
+
+                    except Exception as e:
+                        st.markdown(
+                            f'<div class="error-box">⚠️ 파일 처리 오류: {str(e)}</div>',
+                            unsafe_allow_html=True
+                        )
 
 
 
@@ -350,6 +361,14 @@ def attack_page():
     with graph_col:
         st.markdown('<div class="section-title">네트워크 그래프 — 노드/엣지 클릭 시 세부정보</div>',
                     unsafe_allow_html=True)
+        
+        if st.session_state.get("file_type") == "pcap":
+            file_bytes = st.session_state.get("file_bytes")
+
+            if file_bytes:
+                pcap_file = BytesIO(file_bytes)
+                edge_df = pcap_to_edge_df(pcap_file)
+
         st.components.v1.html(build_graph_html(edge_df, risk_scores), height=620)
 
     with chat_col:
