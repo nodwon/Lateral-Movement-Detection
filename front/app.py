@@ -375,10 +375,10 @@ def attack_page():
             sus_host   = ml_result.get("suspicious_host", "N/A")
 
             # 위험도 색상
-            if risk_score >= 0.7:
+            if risk_score >= 2:
                 score_color = "#FF4B4B"
                 score_label = "HIGH"
-            elif risk_score >= 0.4:
+            elif risk_score >= 0.9:
                 score_color = "#FFA500"
                 score_label = "MEDIUM"
             else:
@@ -529,7 +529,7 @@ def attack_page():
 
         if user_input:
             if not api_key:
-                st.warning("⚠️ .env 파일에 OPENAI_API_KEY를 추가해주세요.")
+                st.warning("⚠️ 현재 모델이 사용 불가 해요!(api-key오류)")
             else:
                 # 1. 내 메시지 즉시 저장 + 로딩 상태 ON
                 st.session_state["chat_history"].append({"role": "user", "content": user_input})

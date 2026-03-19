@@ -124,8 +124,31 @@ def load_pcap(pcap_file) -> pd.DataFrame:
     df["sjit"]     = df["sintpkt"].round(4)
     df["djit"]     = df["dintpkt"].round(4)
 
+    # ── 신규 파생 피처 (새 모델 버전) ─────────────────────────────
+    # 패킷당 평균 바이트
+    df["avg_sbytes_per_pkt"] = (df["sbytes"] / df["spkts"].replace(0, 1)).round(2)
+    df["avg_dbytes_per_pkt"] = (df["dbytes"] / df["dpkts"].replace(0, 1)).round(2)
+
+    # 바이트 비대칭성 (발신 vs 수신 비율 차이)
+    total_bytes = df["sbytes"] + df["dbytes"]
+    df["byte_asymmetry"] = (
+        (df["sbytes"] - df["dbytes"]) / total_bytes.replace(0, 1)
+    ).round(4)
+
+    # 초당 연결 수 (dur 기반)
+    df["conn_rate_per_sec"] = (
+        df["spkts"] / df["dur"].replace(0, 1)
+    ).round(4)
+
+    # 지속 시간당 바이트/패킷
+    df["bytes_per_dur"] = (df["sbytes"] / df["dur"].replace(0, 1)).round(2)
+    df["pkts_per_dur"]  = (df["spkts"] / df["dur"].replace(0, 1)).round(2)
+
+    # 손실 대비 바이트 비율 (sloss=0으로 근사)
+    df["loss_to_bytes_ratio"] = 0.0  # PCAP에서 sloss 직접 계산 불가 → 0으로 근사
+
     # is_internal, is_critical_port (XGBoost 핵심 피처)
-    df["is_internal"]     = df["src"].apply(_is_internal)
+    df["is_internal"]      = df["src"].apply(_is_internal)
     df["is_critical_port"] = df["dsport"].apply(
         lambda p: 1 if int(p) in LATERAL_PORTS else 0
     )
@@ -212,6 +235,40 @@ def load_csv(file) -> pd.DataFrame:
         lambda r: LATERAL_PORTS.get(int(r["DestPort"]), r["Application"])
                   if pd.notna(r["DestPort"]) else r["Application"], axis=1
     )
+
+    # ── 신규 파생 피처 (새 모델 버전) ────────────────────────────
+    # sbytes/dbytes/spkts/dpkts/dur 컬럼이 있을 때만 계산
+    for col in ["sbytes","dbytes","spkts","dpkts","dur"]:
+        if col not in df.columns:
+            df[col] = 0
+
+    df["sbytes"] = pd.to_numeric(df["sbytes"], errors="coerce").fillna(0)
+    df["dbytes"] = pd.to_numeric(df["dbytes"], errors="coerce").fillna(0)
+    df["spkts"]  = pd.to_numeric(df["spkts"],  errors="coerce").fillna(0)
+    df["dpkts"]  = pd.to_numeric(df["dpkts"],  errors="coerce").fillna(0)
+    df["dur"]    = pd.to_numeric(df["dur"],     errors="coerce").fillna(0)
+
+    df["avg_sbytes_per_pkt"] = (df["sbytes"] / df["spkts"].replace(0, 1)).round(2)
+    df["avg_dbytes_per_pkt"] = (df["dbytes"] / df["dpkts"].replace(0, 1)).round(2)
+    total_bytes = df["sbytes"] + df["dbytes"]
+    df["byte_asymmetry"]     = ((df["sbytes"] - df["dbytes"]) / total_bytes.replace(0, 1)).round(4)
+    df["conn_rate_per_sec"]  = (df["spkts"] / df["dur"].replace(0, 1)).round(4)
+    df["bytes_per_dur"]      = (df["sbytes"] / df["dur"].replace(0, 1)).round(2)
+    df["pkts_per_dur"]       = (df["spkts"]  / df["dur"].replace(0, 1)).round(2)
+
+    if "loss_to_bytes_ratio" not in df.columns:
+        df["loss_to_bytes_ratio"] = 0.0
+
+    # is_internal, is_critical_port
+    if "is_internal" not in df.columns:
+        if "SourceAddress" in df.columns:
+            df["is_internal"] = df["SourceAddress"].apply(_is_internal)
+        else:
+            df["is_internal"] = 0
+    if "is_critical_port" not in df.columns:
+        df["is_critical_port"] = df["DestPort"].apply(
+            lambda p: 1 if pd.notna(p) and int(p) in LATERAL_PORTS else 0
+        )
 
     return df
 

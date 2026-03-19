@@ -63,8 +63,21 @@ class SecurityAIAgent:
         return X
 
     def analyze(self, df):
+<<<<<<< HEAD
         if self.model is None:
             return {"risk_score": 0.0, "lm_suspected": False, "summary_text": "AI 모델 미로드"}
+=======
+        # 1. 내부 컬럼명 → 모델 피처명으로 매핑
+        # 모델 피처: sport, dsport, proto, sbytes, service 등 원본 UNSW-NB15 컬럼명
+        # is_internal, is_critical_port 는 이미 동일한 이름이므로 rename 불필요
+        # 모델 피처 매핑 (sport/dsport 제거됨, 파생 피처 추가됨)
+        rename_map = {
+            "ProtoRaw":    "proto",
+            "Bytes":       "sbytes",
+            "Application": "service",
+        }
+        X = df.rename(columns=rename_map).copy()
+>>>>>>> f36dcd2474ef6edd46c938e2648e1c0e17fb7f8c
 
         try:
             X_processed = self._preprocess_data(df)
@@ -89,9 +102,41 @@ class SecurityAIAgent:
                 status = "👀 [Low] 주의가 필요한 정찰/스캔 활동이 감지되었습니다."
                 is_lm = False
             else:
+<<<<<<< HEAD
                 risk_score = 0.0
                 status = "✅ 특이 사항 없는 안전한 상태입니다."
                 is_lm = False
+=======
+                labels = preds
+
+            df = df.copy()
+            df["predicted_label"] = labels
+
+            # 숫자형이면 threshold 기반, 문자열이면 공격 키워드 기반 판단
+            sample = labels[0]
+            if isinstance(sample, (int, float, np.integer, np.floating)):
+                # 숫자: risk_score 기준 (4 이상 = 고위험)
+                df["predicted_risk_num"] = pd.to_numeric(df["predicted_label"], errors="coerce").fillna(0)
+                high_risk_df = df[df["predicted_risk_num"] >= 2]  # 클래스 [1,2,3] 기준 2 이상 = 위험
+                avg_risk = round(float(df["predicted_risk_num"].mean()), 2)
+            else:
+                # 문자열: Normal이 아닌 것 = 공격
+                ATTACK_KEYWORDS = {"lateral", "exploit", "backdoor", "shellcode",
+                                   "reconnaissance", "fuzzers", "worms", "dos",
+                                   "analysis", "generic"}
+                def is_attack(label):
+                    if str(label).strip().lower() == "normal": return False
+                    if str(label).strip() in ("0", ""): return False
+                    return True
+                high_risk_df = df[df["predicted_label"].apply(is_attack)]
+                avg_risk = round(len(high_risk_df) / max(len(df), 1), 2)
+
+            suspicious_host = (
+                high_risk_df["SourceAddress"].mode()[0]
+                if not high_risk_df.empty and "SourceAddress" in high_risk_df.columns
+                else "N/A"
+            )
+>>>>>>> f36dcd2474ef6edd46c938e2648e1c0e17fb7f8c
 
             return {
                 "risk_score": risk_score,
