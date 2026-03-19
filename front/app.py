@@ -76,6 +76,67 @@ st.markdown(f"""
 if "page" not in st.session_state: st.session_state["page"] = "upload"
 if "chat_history" not in st.session_state: st.session_state["chat_history"] = []
 if "is_thinking" not in st.session_state: st.session_state["is_thinking"] = False
+if "guide_shown" not in st.session_state: st.session_state["guide_shown"] = False
+
+@st.dialog("📖 네트워크 그래프 읽는 법", width="large")
+def show_graph_guide():
+    st.markdown("**노드 색상**")
+    st.markdown("노드 색상은 해당 IP의 위험도를 나타냅니다.")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.error("🔴 HIGH — AI 모델 또는 룰 기반 분석에서 고위험으로 분류된 IP")
+    with col2:
+        st.warning("🟠 MEDIUM — 의심 행동이 감지된 IP")
+    with col3:
+        st.success("🟢 LOW — 현재 정상 범위의 IP")
+
+    st.markdown("**노드 모양**")
+    st.markdown("⭐ 별 모양은 NetworkX가 탐지한 공격 경로 위의 노드이고, ◆ 다이아몬드는 외부 IP(내부망 아님)입니다.")
+
+    st.divider()
+
+    st.markdown("**노드 크기 — 경유 중심성(Betweenness)**")
+    st.markdown("""
+노드가 **클수록** 다른 IP들 사이의 **중간 다리 역할**을 많이 한다는 뜻입니다.
+예를 들어 A→B→C 경로에서 B는 A와 C를 이어주는 중간 경유지입니다.
+공격자가 내부망을 이동할 때 반드시 거치는 **피벗 포인트** IP가 크게 표시됩니다.
+""")
+
+    st.divider()
+
+    st.markdown("**측면이동 PageRank**")
+    st.markdown("""
+노드 클릭 시 표시되는 **측면이동 PR** 수치는 SMB·RDP·SSH 등 **측면이동 의심 포트로만 이뤄진 연결**에서
+얼마나 중심적인 전파 허브인지를 나타냅니다.
+
+구글 검색 순위와 같은 원리로, 많은 내부 IP로 측면이동 트래픽을 퍼뜨릴수록 높은 점수를 받습니다.
+**값이 높을수록** 감염을 확산시키는 핵심 허브일 가능성이 높습니다.
+""")
+
+    st.divider()
+
+    st.markdown("**연결선(엣지)**")
+    st.markdown("""
+- 🟡 **노란선** — NetworkX가 탐지한 공격 경로
+- 🔴 **빨간선** — 측면이동 의심 포트(SMB, RDP, SSH 등) 사용 연결
+- ⬜ **회색 점선** — 일반 트래픽
+""")
+
+    st.divider()
+
+    st.markdown("**조작법**")
+    st.markdown("""
+- 노드를 **클릭**하면 연결된 노드만 강조되고 상세 정보가 표시됩니다
+- 같은 노드를 다시 클릭하거나 빈 곳을 클릭하면 초기화됩니다
+- **스크롤**로 확대·축소, **드래그**로 화면 이동이 가능합니다
+- **⛶ 꽉채우기** 버튼으로 그래프를 화면 전체로 볼 수 있습니다
+""")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    if st.button("✅ 확인했습니다", use_container_width=True):
+        st.session_state["guide_shown"] = True
+        st.rerun()
+
 
 def go_home():
     st.session_state["page"] = "upload"
@@ -221,6 +282,11 @@ def attack_page():
 
     st.divider()
 
+    # ── 그래프 읽는 법 팝업 (분석 화면 최초 진입 시 1회) ──────────
+    if not st.session_state.get("guide_shown"):
+        show_graph_guide()
+        st.stop()
+
     c1, c2, c3, c4 = st.columns(4)
     with c1: st.markdown(f'<div class="metric-card"><div class="label">전체 패킷</div><div class="value">{len(df):,}</div></div>', unsafe_allow_html=True)
     with c2: st.markdown(f'<div class="metric-card"><div class="label">측면이동 의심</div><div class="value" style="color:#FF4B4B">{len(lateral_df):,}</div></div>', unsafe_allow_html=True)
@@ -229,6 +295,14 @@ def attack_page():
 
     graph_col, chat_col = st.columns([5, 5])
     with graph_col:
+        title_col, btn_col = st.columns([8, 2])
+        with title_col:
+            st.markdown('<div class="section-title">네트워크 그래프</div>', unsafe_allow_html=True)
+        with btn_col:
+            if st.button("🔲 전체화면", use_container_width=True, help="그래프 전용 페이지로 이동"):
+                st.session_state["prev_page"] = "attack"
+                st.session_state["page"] = "graph_full"
+                st.rerun()
         st.components.v1.html(build_graph_html(edge_df, risk_scores), height=620)
     with chat_col:
         st.markdown('<div class="section-title">🤖 데이터 분석 챗봇</div>', unsafe_allow_html=True)
@@ -260,6 +334,58 @@ def attack_page():
             st.info("IP별 위험도 데이터가 없습니다.")
     with tab3: st.dataframe(df.head(500), use_container_width=True)
 
+# ── 페이지 4: 그래프 전체화면 ─────────────────────────────────────
+def graph_full_page():
+    st.markdown("""
+    <style>
+    [data-testid="stAppViewContainer"] { background: #0d0d1a !important; }
+    [data-testid="stHeader"]           { display: none !important; }
+    [data-testid="stSidebarCollapsedControl"] { display: none !important; }
+    .block-container {
+        padding: 0 !important;
+        max-width: 100% !important;
+    }
+    /* 돌아가기 버튼 고정 */
+    div[data-testid="stButton"] > button {
+        position: fixed !important;
+        top: 12px !important;
+        left: 12px !important;
+        z-index: 9999 !important;
+        background: rgba(112,128,255,0.2) !important;
+        border: 1px solid #7080ff !important;
+        color: #7080ff !important;
+        font-size: 12px !important;
+        padding: 4px 12px !important;
+    }
+    </style>""", unsafe_allow_html=True)
+
+    df = st.session_state.get("df")
+    if df is None:
+        st.error("데이터가 없습니다.")
+        if st.button("🏠 돌아가기"): go_home()
+        return
+
+    from analysis import compute_risk, aggregate_edges
+    risk_scores = compute_risk(df)
+    edge_df     = aggregate_edges(df)
+
+    if st.button("← 돌아가기", key="graph_back"):
+        st.session_state["page"] = st.session_state.get("prev_page", "attack")
+        st.rerun()
+
+    # 브라우저 화면 높이에서 버튼 영역 뺀 만큼 사용
+    st.components.v1.html(
+        build_graph_html(edge_df, risk_scores),
+        height=10000,  # 매우 크게 설정 → CSS로 실제 높이 제한
+        scrolling=False
+    )
+    # 그래프 iframe을 화면 꽉 차게
+    st.markdown("""
+    <style>
+    iframe { height: calc(100vh - 60px) !important; width: 100% !important; }
+    </style>""", unsafe_allow_html=True)
+
+
 # ── 페이지 3: 정상 ──────────────────────────────────────────────
 def normal_page():
     _, mid, _ = st.columns([1, 2, 1])
@@ -274,3 +400,4 @@ def normal_page():
 if st.session_state["page"] == "upload": upload_page()
 elif st.session_state["page"] == "attack": attack_page()
 elif st.session_state["page"] == "normal": normal_page()
+elif st.session_state["page"] == "graph_full": graph_full_page()

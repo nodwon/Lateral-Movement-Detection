@@ -344,9 +344,46 @@ body{{display:flex;flex-direction:column;}}
   background:rgba(100,100,180,0.15);border-radius:3px;
   padding:0 5px;}}
 .path-str{{color:#8899aa;font-size:11px;word-break:break-all;}}
+
+/* 전체화면 오버레이 */
+#fs-overlay{{
+  display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;
+  background:#0d0d1a;z-index:99999;flex-direction:column;
+}}
+#fs-overlay.active{{display:flex;}}
+#fs-graph{{width:100%;flex:1;min-height:0;background:#0d0d1a;}}
+#fs-info-panel{{position:absolute;top:12px;right:60px;background:rgba(20,20,40,0.96);
+  border:1px solid #333;border-radius:8px;padding:14px 18px;width:210px;
+  color:#ccc;font-size:12px;display:none;z-index:10;line-height:1.7;}}
+#fs-info-panel h4{{color:#fff;margin-bottom:6px;font-size:13px;}}
+#fs-btn{{
+  position:absolute;top:10px;right:10px;z-index:20;
+  background:rgba(112,128,255,0.2);border:1px solid #7080ff;
+  border-radius:6px;padding:4px 10px;color:#7080ff;
+  font-size:11px;cursor:pointer;font-family:monospace;
+}}
+#fs-btn:hover{{background:rgba(112,128,255,0.35);}}
+#fs-close-btn{{
+  position:absolute;top:12px;right:12px;z-index:100000;
+  background:rgba(255,75,75,0.2);border:1px solid #FF4B4B;
+  border-radius:6px;padding:6px 14px;color:#FF4B4B;
+  font-size:12px;cursor:pointer;font-family:monospace;
+}}
+#fs-close-btn:hover{{background:rgba(255,75,75,0.35);}}
 </style></head><body>
+<!-- 전체화면 오버레이 -->
+<div id="fs-overlay">
+  <button id="fs-close-btn" onclick="closeFullscreen()">✕ 닫기 (ESC)</button>
+  <div id="fs-graph"></div>
+  <div id="fs-info-panel">
+    <h4 id="fs-ip-title">-</h4>
+    <div id="fs-risk-badge" class="risk-badge">-</div>
+    <div id="fs-ip-details"></div>
+  </div>
+</div>
 <div style="position:relative;flex:1;min-height:0;display:flex;flex-direction:column;">
   <div id="graph"></div>
+  <button id="fs-btn" onclick="openFullscreen()">⛶ 꽉채우기</button>
   <div id="info-panel">
     <h4 id="ip-title">-</h4>
     <div id="risk-badge" class="risk-badge">-</div>
@@ -522,7 +559,6 @@ network.on('click',function(p){{
 
 network.on('stabilizationIterationsDone',function(){{
   network.setOptions({{physics:{{enabled:false}}}});
-  // 안정화 후 원본 색상 재저장 (physics 이후 색상 확정)
   nodes.get().forEach(function(n){{
     if(n.color&&n.color.background){{
       originalNodeColors[n.id]={{
@@ -532,5 +568,77 @@ network.on('stabilizationIterationsDone',function(){{
       }};
     }}
   }});
+}});
+
+// ── 전체화면 (노드 위치 그대로 유지) ─────────────────────
+var fsNetwork=null;
+
+function openFullscreen(){{
+  // 현재 노드 위치 저장
+  var positions=network.getPositions();
+
+  // 위치 정보를 노드 데이터에 고정
+  var posNodes=nodes.get().map(function(n){{
+    var pos=positions[n.id];
+    return Object.assign({{}},n,{{
+      x: pos?pos.x:n.x,
+      y: pos?pos.y:n.y,
+      fixed:{{x:true,y:true}}
+    }});
+  }});
+  var fixedNodes=new vis.DataSet(posNodes);
+
+  document.getElementById('fs-overlay').classList.add('active');
+  if(fsNetwork){{ fsNetwork.destroy(); }}
+  fsNetwork=new vis.Network(
+    document.getElementById('fs-graph'),
+    {{nodes:fixedNodes,edges:edges}},
+    {{
+      physics:{{enabled:false}},
+      interaction:{{hover:true,tooltipDelay:80,zoomView:true,dragView:true}},
+      edges:{{smooth:{{type:'curvedCW',roundness:0.15}}}},
+      nodes:{{borderWidth:2}}
+    }}
+  );
+
+  // 전체화면에서도 동일한 클릭 동작
+  fsNetwork.on('click',function(p){{
+    var panel=document.getElementById('fs-info-panel');
+    if(p.nodes.length>0){{
+      var nodeId=p.nodes[0];
+      var n=nodes.get(nodeId);
+      document.getElementById('fs-ip-title').textContent=nodeId;
+      var b=document.getElementById('fs-risk-badge');
+      b.textContent=n.risk>=0.7?'HIGH':(n.risk>=0.4?'MEDIUM':'LOW');
+      b.style.background=originalNodeColors[nodeId]?originalNodeColors[nodeId].background:'#333';
+      b.style.color='#fff';
+      var ce=edges.get({{filter:function(e){{return e.from===nodeId||e.to===nodeId;}}}});
+      var outbound=ce.filter(function(e){{return e.from===nodeId;}});
+      var inbound=ce.filter(function(e){{return e.to===nodeId;}});
+      var latOut=outbound.filter(function(e){{return originalEdgeColors[e.id]&&originalEdgeColors[e.id].width>=2.5;}}).length;
+      document.getElementById('fs-ip-details').innerHTML=
+        '<br>Risk Score: <b>'+n.risk+'</b>'+
+        '<br>경유 중심성: <b>'+n.betweenness+'</b>'+
+        '<br>측면이동 PR: <b>'+n.lat_pagerank+'</b>'+
+        '<br>발신: '+outbound.length+'건 | 수신: '+inbound.length+'건'+
+        (latOut>0?'<br><span style="color:#FF4B4B">⚠️ 측면이동 발신: '+latOut+'건</span>':'');
+      panel.style.display='block';
+    }}else{{
+      panel.style.display='none';
+    }}
+  }});
+
+  // 전체화면에서 뷰 맞춤
+  setTimeout(function(){{ fsNetwork.fit({{animation:false}}); }},100);
+}}
+
+function closeFullscreen(){{
+  document.getElementById('fs-overlay').classList.remove('active');
+  document.getElementById('fs-info-panel').style.display='none';
+  if(fsNetwork){{ fsNetwork.destroy(); fsNetwork=null; }}
+}}
+
+document.addEventListener('keydown',function(e){{
+  if(e.key==='Escape'){{ closeFullscreen(); }}
 }});
 </script></body></html>"""
