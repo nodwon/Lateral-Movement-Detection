@@ -40,33 +40,35 @@ def get_logo_b64() -> str:
 
 LOGO_B64 = get_logo_b64()
 
-# ── CSS (다원님 오리지널 스타일 복구) ──────────────────────────
 st.markdown(f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600&display=swap');
 * {{ font-family: 'Noto Sans KR', sans-serif; }}
+
+/* ── 기본 배경 ── */
 [data-testid="stAppViewContainer"] {{ background: #e8b4a0; }}
-[data-testid="stHeader"] {{ background: transparent; }}
-[data-testid="stSidebar"] {{ background: #d9a090 !important; }}
+[data-testid="stHeader"]           {{ background: transparent; }}
+[data-testid="stSidebar"]          {{ background: #d9a090 !important; }}
 
-/* 사이드바 화살표 시인성 강화 */
-[data-testid="stSidebarCollapsedControl"] {{
-    background-color: #7080ff !important;
-    border-radius: 8px !important;
-    padding: 5px !important;
-}}
-[data-testid="stSidebarCollapsedControl"] svg {{
-    fill: white !important;
-}}
+/* ── 업로드 화면 사이드바 토글 숨김 ── */
+[data-testid="stSidebarCollapsedControl"] {{ display: none !important; }}
 
+/* ── 로고 고정 ── */
 .logo-fixed {{ position: fixed; bottom: 28px; left: 28px; z-index: 99999; opacity: 0.92; }}
 .logo-fixed img {{ width: 100px; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.15)); }}
+
+/* ── 타이틀 ── */
 .main-title {{ font-size: 22px; font-weight: 600; color: #3a2a22; padding: 44px 0 28px; letter-spacing: 3px; text-align: center; }}
+
+/* ── 분석 화면 ── */
 .metric-card {{ background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 10px; padding: 14px 18px; text-align: center; }}
 .metric-card .label {{ color: #888; font-size: 12px; margin-bottom: 4px; }}
 .metric-card .value {{ color: #fff; font-size: 26px; font-weight: bold; }}
-.chat-user {{ background: #1e2a4a; border-radius: 12px 12px 2px 12px; padding: 11px 15px; margin: 6px 0; color: #e0e0ff; font-size: 14px; margin-left: 6%; }}
-.chat-bot {{ background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 12px 12px 12px 2px; padding: 11px 15px; margin: 6px 0; color: #ccc; font-size: 14px; margin-right: 6%; }}
+.section-title {{ color: #7080ff; font-size: 12px; font-weight: bold; letter-spacing: 2px; text-transform: uppercase; margin: 14px 0 8px; }}
+
+/* ── 챗봇 말풍선 ── */
+.chat-user {{ background: #1e2a4a; border-radius: 12px 12px 2px 12px; padding: 11px 15px; margin: 6px 0; color: #e0e0ff; font-size: 14px; margin-left: 6%; line-height: 1.6; }}
+.chat-bot {{ background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 12px 12px 12px 2px; padding: 11px 15px; margin: 6px 0; color: #ccc; font-size: 14px; margin-right: 6%; line-height: 1.6; }}
 </style>
 {"" if not LOGO_B64 else f'<div class="logo-fixed"><img src="data:image/png;base64,{LOGO_B64}"/></div>'}
 """, unsafe_allow_html=True)
@@ -139,7 +141,20 @@ def upload_page():
 
 # ── 페이지 2: 공격 탐지 ────────────────────────────────────────────
 def attack_page():
-    st.markdown("<style>[data-testid='stAppViewContainer'] { background: #0d0d1a !important; }</style>", unsafe_allow_html=True)
+    st.markdown("""
+    <style>
+    [data-testid="stAppViewContainer"] { background: #0d0d1a !important; }
+    [data-testid="stHeader"]           { background: #0d0d1a !important; }
+    [data-testid="stSidebar"]          { background: #0a0a14 !important; }
+    [data-testid="stSidebarCollapsedControl"] { display: block !important; background-color: rgba(255,255,255,0.15) !important; border-radius: 8px !important; border: 1px solid rgba(255,255,255,0.35) !important; }
+    [data-testid="stSidebarCollapsedControl"] span, [data-testid="stSidebarCollapsedControl"] svg { color: #ffffff !important; fill: #ffffff !important; opacity: 1 !important; }
+    [data-testid="stSidebarCollapseButton"] { background-color: rgba(255,255,255,0.15) !important; border-radius: 8px !important; border: 1px solid rgba(255,255,255,0.35) !important; }
+    [data-testid="stSidebarCollapseButton"] span, [data-testid="stSidebarCollapseButton"] svg { color: #ffffff !important; fill: #ffffff !important; opacity: 1 !important; }
+    [data-testid="stExpandSidebarButton"] { background-color: rgba(255,255,255,0.15) !important; border-radius: 8px !important; border: 1px solid rgba(255,255,255,0.35) !important; }
+    [data-testid="stExpandSidebarButton"] span, [data-testid="stExpandSidebarButton"] svg { color: #ffffff !important; fill: #ffffff !important; opacity: 1 !important; }
+    [data-testid="stBaseButton-headerNoPadding"] { background-color: rgba(255,255,255,0.15) !important; border-radius: 8px !important; }
+    [data-testid="stBaseButton-headerNoPadding"] span, [data-testid="stBaseButton-headerNoPadding"] svg { color: #ffffff !important; fill: #ffffff !important; opacity: 1 !important; }
+    </style>""", unsafe_allow_html=True)
     df = st.session_state.get("df")
     ml_result = st.session_state.get("ml_result")
     edge_df, risk_scores, lateral_df, high_risk, rule_summary = load_analysis(df)
