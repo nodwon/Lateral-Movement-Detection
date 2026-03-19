@@ -53,16 +53,22 @@ st.markdown(f"""
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600&display=swap');
 * {{ font-family: 'Noto Sans KR', sans-serif; }}
 
+/* ── 기본 배경 ── */
 [data-testid="stAppViewContainer"] {{ background: #e8b4a0; }}
 [data-testid="stHeader"]           {{ background: transparent; }}
-[data-testid="stSidebar"]          {{ background: #d9a090; }}
+[data-testid="stSidebar"]          {{ background: #d9a090 !important; }}
 
-/* 로고 고정 — 왼쪽 하단 */
+/* ── 업로드 화면 — 사이드바 토글 버튼 숨김 ── */
+[data-testid="stSidebarCollapsedControl"] {{
+    display: none !important;
+}}
+
+/* ── 로고 고정 — 왼쪽 하단, 사이드바보다 위 ── */
 .logo-fixed {{
     position: fixed;
     bottom: 28px;
     left: 28px;
-    z-index: 9999;
+    z-index: 99999;
     opacity: 0.92;
 }}
 .logo-fixed img {{
@@ -297,7 +303,49 @@ def attack_page():
     st.markdown("""
     <style>
     [data-testid="stAppViewContainer"] { background: #0d0d1a !important; }
+    [data-testid="stHeader"]           { background: #0d0d1a !important; }
     [data-testid="stSidebar"]          { background: #0a0a14 !important; }
+
+    /* 사이드바 여닫기 버튼 (stSidebarCollapseButton) — 밝게 강조 */
+    [data-testid="stSidebarCollapseButton"] {
+        background-color: rgba(255,255,255,0.15) !important;
+        border-radius: 8px !important;
+        border: 1px solid rgba(255,255,255,0.35) !important;
+    }
+    [data-testid="stSidebarCollapseButton"] button {
+        background-color: transparent !important;
+    }
+    [data-testid="stSidebarCollapseButton"] span,
+    [data-testid="stSidebarCollapseButton"] svg {
+        color: #ffffff !important;
+        fill: #ffffff !important;
+        opacity: 1 !important;
+    }
+    /* 사이드바 열기 버튼 — stExpandSidebarButton */
+    [data-testid="stExpandSidebarButton"] {
+        background-color: rgba(255,255,255,0.15) !important;
+        border-radius: 8px !important;
+        border: 1px solid rgba(255,255,255,0.35) !important;
+    }
+    [data-testid="stExpandSidebarButton"] span,
+    [data-testid="stExpandSidebarButton"] svg,
+    [data-testid="stExpandSidebarButton"] button {
+        color: #ffffff !important;
+        fill: #ffffff !important;
+        opacity: 1 !important;
+    }
+    /* 혹시 모를 이전 셀렉터도 유지 */
+    [data-testid="stSidebarCollapsedControl"] {
+        background-color: rgba(255,255,255,0.15) !important;
+        border-radius: 8px !important;
+        border: 1px solid rgba(255,255,255,0.35) !important;
+    }
+    [data-testid="stSidebarCollapsedControl"] span,
+    [data-testid="stSidebarCollapsedControl"] svg {
+        color: #ffffff !important;
+        fill: #ffffff !important;
+        opacity: 1 !important;
+    }
     </style>""", unsafe_allow_html=True)
 
     df = st.session_state.get("df")
