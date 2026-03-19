@@ -22,9 +22,8 @@ class SecurityAIAgent:
         # 1. 내부 컬럼명 → 모델 피처명으로 매핑
         # 모델 피처: sport, dsport, proto, sbytes, service 등 원본 UNSW-NB15 컬럼명
         # is_internal, is_critical_port 는 이미 동일한 이름이므로 rename 불필요
+        # 모델 피처 매핑 (sport/dsport 제거됨, 파생 피처 추가됨)
         rename_map = {
-            "SrcPort":     "sport",
-            "DestPort":    "dsport",
             "ProtoRaw":    "proto",
             "Bytes":       "sbytes",
             "Application": "service",
@@ -66,7 +65,7 @@ class SecurityAIAgent:
             if isinstance(sample, (int, float, np.integer, np.floating)):
                 # 숫자: risk_score 기준 (4 이상 = 고위험)
                 df["predicted_risk_num"] = pd.to_numeric(df["predicted_label"], errors="coerce").fillna(0)
-                high_risk_df = df[df["predicted_risk_num"] >= 4]
+                high_risk_df = df[df["predicted_risk_num"] >= 2]  # 클래스 [1,2,3] 기준 2 이상 = 위험
                 avg_risk = round(float(df["predicted_risk_num"].mean()), 2)
             else:
                 # 문자열: Normal이 아닌 것 = 공격
