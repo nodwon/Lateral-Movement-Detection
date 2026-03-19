@@ -71,7 +71,7 @@ Day 3: 실시간 시뮬레이션 및 클라우드 배포
 
 두 에이전트의 충돌을 방지하고 사용자 요청에 맞는 최적의 분석 결과를 프런트엔드에 전달합니다.
 
-[결과물 페이지](https://github.com/user-attachments/assets/3f6dd46f-ef62-43a7-9d82-fc202c70a67d)
+![결과물 페이지](https://github.com/user-attachments/assets/3f6dd46f-ef62-43a7-9d82-fc202c70a67d)
 
 🛠 기술 스택
 
