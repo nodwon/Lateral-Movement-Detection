@@ -186,6 +186,8 @@ if "page" not in st.session_state:
     st.session_state["page"] = "upload"
 if "chat_history" not in st.session_state:
     st.session_state["chat_history"] = []
+if "is_thinking" not in st.session_state:
+    st.session_state["is_thinking"] = False
 
 # ── 필수 컬럼 검사 ────────────────────────────────────────────────
 # 포맷 A (PCAP 추출) 또는 포맷 B (UNSW-NB15) 둘 중 하나면 통과
@@ -466,8 +468,10 @@ def attack_page():
         if not api_key:
             st.warning("💡 `.env`에 `OPENAI_API_KEY`를 추가하면 챗봇을 사용할 수 있습니다.")
 
-        with st.container(height=460):
-            if not st.session_state["chat_history"]:
+        # 대화창
+        chat_container = st.container(height=460)
+        with chat_container:
+            if not st.session_state["chat_history"] and not st.session_state.get("is_thinking"):
                 st.markdown("""
                 <div style='color:#555;font-size:14px;padding:40px 0;text-align:center;line-height:2.6'>
                     💬 데이터에 대해 질문해보세요<br>
@@ -484,6 +488,26 @@ def attack_page():
                     icon = "🧑" if msg["role"] == "user" else "🤖"
                     st.markdown(f'<div class="{css}">{icon} {msg["content"]}</div>',
                                 unsafe_allow_html=True)
+                # 로딩 중 말풍선
+                if st.session_state.get("is_thinking"):
+                    st.markdown("""
+                    <div class='chat-bot' style='display:flex;align-items:center;gap:8px'>
+                        🤖
+                        <span style='display:flex;gap:4px;align-items:center'>
+                            <span style='width:7px;height:7px;border-radius:50%;background:#7080ff;
+                                animation:bounce 1s infinite 0s'></span>
+                            <span style='width:7px;height:7px;border-radius:50%;background:#7080ff;
+                                animation:bounce 1s infinite 0.2s'></span>
+                            <span style='width:7px;height:7px;border-radius:50%;background:#7080ff;
+                                animation:bounce 1s infinite 0.4s'></span>
+                        </span>
+                        <style>
+                        @keyframes bounce {{
+                            0%,80%,100%{{transform:translateY(0)}}
+                            40%{{transform:translateY(-6px)}}
+                        }}
+                        </style>
+                    </div>""", unsafe_allow_html=True)
 
         st.markdown("<div style='color:#555;font-size:11px;margin:8px 0 5px'>빠른 질문</div>",
                     unsafe_allow_html=True)
@@ -507,13 +531,19 @@ def attack_page():
             if not api_key:
                 st.warning("⚠️ .env 파일에 OPENAI_API_KEY를 추가해주세요.")
             else:
+                # 1. 내 메시지 즉시 저장 + 로딩 상태 ON
                 st.session_state["chat_history"].append({"role": "user", "content": user_input})
-                with st.spinner("분석 중..."):
-                    reply = chat_with_data(
-                    st.session_state["chat_history"], combined_summary, api_key
-            )                    
-                st.session_state["chat_history"].append({"role": "assistant", "content": reply})
+                st.session_state["is_thinking"] = True
                 st.rerun()
+
+        # 로딩 중이면 GPT 호출 후 답변 저장
+        if st.session_state.get("is_thinking"):
+            reply = chat_with_data(
+                st.session_state["chat_history"], combined_summary, api_key
+            )
+            st.session_state["chat_history"].append({"role": "assistant", "content": reply})
+            st.session_state["is_thinking"] = False
+            st.rerun()
 
     # 하단 탭
     st.markdown("<br>", unsafe_allow_html=True)
