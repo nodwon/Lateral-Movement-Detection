@@ -202,6 +202,8 @@ def upload_page():
 
 # ── 페이지 2: 공격 탐지 ────────────────────────────────────────────
 def attack_page():
+    api_key = get_api_key()
+
     st.markdown("""
     <style>
     [data-testid="stAppViewContainer"] { background: #0d0d1a !important; }
@@ -219,6 +221,9 @@ def attack_page():
     df = st.session_state.get("df")
     ml_result = st.session_state.get("ml_result")
     edge_df, risk_scores, lateral_df, high_risk, rule_summary = load_analysis(df)
+
+    ai_summary = ml_result.get("summary_text", "") if ml_result else ""
+    combined_summary = f"{ai_summary}\n\n[세부 지표]\n{rule_summary}"
     
     with st.sidebar:
         st.markdown("### 🔍 분석 정보")
@@ -308,18 +313,87 @@ def attack_page():
         st.markdown('<div class="section-title">🤖 데이터 분석 챗봇</div>', unsafe_allow_html=True)
         chat_container = st.container(height=460)
         with chat_container:
-            for msg in st.session_state["chat_history"]:
-                cls = "chat-user" if msg["role"] == "user" else "chat-bot"
-                st.markdown(f'<div class="{cls}">{msg["content"]}</div>', unsafe_allow_html=True)
-        
-        user_input = st.chat_input("질문하세요...")
+            if not st.session_state["chat_history"] and not st.session_state.get("is_thinking"):
+                st.markdown("""
+                <div style='color:#555;font-size:14px;padding:40px 0;text-align:center;line-height:2.6'>
+                    💬 데이터에 대해 질문해보세요<br>
+                    <span style='color:#444;font-size:13px'>
+                        "가장 위험한 IP가 뭐야?"<br>
+                        "공격 흐름을 설명해줘"<br>
+                        "포트 4444가 왜 위험해?"<br>
+                        "이 공격을 막으려면?"
+                    </span>
+                </div>""", unsafe_allow_html=True)
+            else:
+                for msg in st.session_state["chat_history"]:
+                    css  = "chat-user" if msg["role"] == "user" else "chat-bot"
+                    icon = "🧑" if msg["role"] == "user" else "🤖"
+                    st.markdown(f'<div class="{css}">{icon} {msg["content"]}</div>',
+                                unsafe_allow_html=True)
+                # 로딩 중 말풍선
+                if st.session_state.get("is_thinking"):
+                    st.markdown("""
+                    <div class='chat-bot' style='display:flex;align-items:center;gap:8px'>
+                        🤖
+                        <span style='display:flex;gap:4px;align-items:center'>
+                            <span style='width:7px;height:7px;border-radius:50%;background:#7080ff;
+                                animation:bounce 1s infinite 0s'></span>
+                            <span style='width:7px;height:7px;border-radius:50%;background:#7080ff;
+                                animation:bounce 1s infinite 0.2s'></span>
+                            <span style='width:7px;height:7px;border-radius:50%;background:#7080ff;
+                                animation:bounce 1s infinite 0.4s'></span>
+                        </span>
+                        <style>
+                        @keyframes bounce {{
+                            0%,80%,100%{{transform:translateY(0)}}
+                            40%{{transform:translateY(-6px)}}
+                        }}
+                        </style>
+                    </div>""", unsafe_allow_html=True)
+
+        st.markdown("<div style='color:#555;font-size:11px;margin:8px 0 5px'>빠른 질문</div>",
+                    unsafe_allow_html=True)
+        b1, b2 = st.columns(2)
+        with b1:
+            if st.button("🔴 고위험 IP 분석", use_container_width=True):
+                st.session_state["quick_q"] = "고위험 IP들을 분석해줘"
+            if st.button("🛡️ 대응 방안",      use_container_width=True):
+                st.session_state["quick_q"] = "이 공격에 대한 대응 방안을 알려줘"
+        with b2:
+            if st.button("📋 공격 흐름 설명", use_container_width=True):
+                st.session_state["quick_q"] = "이 데이터의 공격 흐름을 단계별로 설명해줘"
+            if st.button("📊 포트 분석",      use_container_width=True):
+                st.session_state["quick_q"] = "사용된 포트들과 의미를 설명해줘"
+
+        user_input = st.chat_input("데이터에 대해 질문하세요...")
         if user_input:
-            st.session_state["chat_history"].append({"role": "user", "content": user_input})
+            if not api_key:
+                st.warning("⚠️ 현재 모델이 사용 불가 해요!(api-key오류)")
+            else:
+                # 1. 내 메시지 즉시 저장 + 로딩 상태 ON
+                st.session_state["chat_history"].append({"role": "user", "content": user_input})
+                st.session_state["is_thinking"] = True
+                st.rerun()
+        if st.session_state.get("quick_q"):
+            user_q = st.session_state["quick_q"]
+            st.session_state["quick_q"] = None
+
+            st.session_state["chat_history"].append({
+                "role": "user",
+                "content": user_q
+            })
             st.session_state["is_thinking"] = True
             st.rerun()
-        if st.session_state["is_thinking"]:
-            reply = chat_with_data(st.session_state["chat_history"], ml_result.get("summary_text", "") + "\n" + rule_summary, get_api_key())
-            st.session_state["chat_history"].append({"role": "assistant", "content": reply})
+
+        # 로딩 중이면 GPT 호출 후 답변 저장
+        if st.session_state.get("is_thinking"):
+            reply = chat_with_data(
+                st.session_state["chat_history"], combined_summary, api_key
+            )
+            st.session_state["chat_history"].append({
+                "role": "assistant",
+                "content": reply
+            })
             st.session_state["is_thinking"] = False
             st.rerun()
 
