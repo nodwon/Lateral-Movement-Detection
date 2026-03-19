@@ -198,6 +198,8 @@ def load_csv(file) -> pd.DataFrame:
             "stime":  "EventTime",
             "proto":  "ProtoRaw",
         })
+        # XGBoost가 sbytes를 직접 참조하므로 Bytes와 동기화
+        df["sbytes"] = df["Bytes"]
         # 문자열 프로토콜 → Application
         proto_str_map = {"tcp": "TCP", "udp": "UDP", "icmp": "ICMP", "arp": "ARP"}
         df["Application"] = df["ProtoRaw"].str.lower().map(proto_str_map).fillna("OTHER")

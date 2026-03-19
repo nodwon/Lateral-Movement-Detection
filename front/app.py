@@ -374,11 +374,11 @@ def attack_page():
             high_cnt   = ml_result.get("high_risk_count", 0)
             sus_host   = ml_result.get("suspicious_host", "N/A")
 
-            # 위험도 색상
-            if risk_score >= 2:
+            # 위험도 색상 — 0~3 스케일 기준
+            if risk_score >= 2.0:
                 score_color = "#FF4B4B"
                 score_label = "HIGH"
-            elif risk_score >= 0.9:
+            elif risk_score >= 1.0:
                 score_color = "#FFA500"
                 score_label = "MEDIUM"
             else:
