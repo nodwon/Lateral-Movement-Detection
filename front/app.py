@@ -245,7 +245,7 @@ def upload_page():
         if True:
             uploaded = st.file_uploader(
                 "파일 업로드",
-                type=["csv", "pcap"],
+                type=["csv", "pcap", "pcapng"],
                 label_visibility="collapsed",
             )
 
